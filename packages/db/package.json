@@ -7,7 +7,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "prisma generate && tsc",
+    "build": "tsc",
     "postinstall": "prisma generate",
     "clean": "rm -rf dist node_modules"
   },

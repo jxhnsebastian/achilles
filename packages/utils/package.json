@@ -19,6 +19,7 @@
     "@solana/kit": "^2.1.0",
     "@orca-so/whirlpools-client": "^1.0.5",
     "@raydium-io/raydium-sdk-v2": "^0.1.124-alpha",
-    "@solana/spl-token": "^0.4.13"
+    "@solana/spl-token": "^0.4.13",
+    "@lp-tools/db": "workspace:*"
   }
 }
