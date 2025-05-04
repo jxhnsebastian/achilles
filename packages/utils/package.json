@@ -1,0 +1,23 @@
+{
+  "name": "@lp-tools/utils",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "type": "module",
+  "dependencies": {
+    "@mysten/sui": "^1.21.2",
+    "@solana/web3.js": "^1.98.0",
+    "@slack/web-api": "^7.8.0",
+    "decimal.js": "^10.5.0",
+    "@solana/kit": "^2.1.0",
+    "@orca-so/whirlpools-client": "^1.0.5",
+    "@raydium-io/raydium-sdk-v2": "^0.1.124-alpha",
+    "@solana/spl-token": "^0.4.13"
+  }
+}

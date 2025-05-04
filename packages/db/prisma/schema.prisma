@@ -1,0 +1,567 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider          = "postgresql"
+  url               = env("DATABASE_URL")
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
+}
+
+model Agents {
+  id                     Int      @id @default(autoincrement()) @map("id")
+  name                   String   @map("name")
+  twitter                String[] @map("twitter")
+  framework              String   @map("framework")
+  contracts              Json[]
+  ticker                 String   @map("ticker")
+  creationDate           DateTime @map("creation_date")
+  profileImageUrl        String   @map("profile_image_url")
+  marketCapGraph         Json[]
+  marketCap              Float    @map("market_cap")
+  marketCapDelta         Float    @map("market_cap_delta")
+  price                  Float    @map("price")
+  priceDelta             Float    @map("price_delta")
+  holdersCount           Int      @map("holders_count")
+  holdersCountDelta      Int      @map("holders_count_delta")
+  volume24Hours          Float    @map("volume_24_hours")
+  volume24HoursDelta     Float    @map("volume_24_hours_delta")
+  liquidity              Float    @map("liquidity")
+  liquidityDelta         Float    @map("liquidity_delta")
+  mindshare              Float    @map("mindshare")
+  mindshareDelta         Float    @map("mindshare_delta")
+  echo                   Float    @map("echo")
+  echoDelta              Float    @map("echo_delta")
+  followers              Int      @map("followers")
+  followersDelta         Int      @map("followers_delta")
+  smartFollowers         Int      @map("smart_followers")
+  smartFollowersDelta    Int      @map("smart_followers_delta")
+  impressionsMetrics     Json?
+  engagementsMetrics     Json?
+  smartEngagementMetrics Json?
+  bestTweets             Json[]
+  timestamp              DateTime
+
+  @@index([name, ticker, timestamp])
+  @@map("agents")
+}
+
+model Wallets {
+  id                  Int                        @id @default(autoincrement())
+  walletAddress       String                     @map("wallet_address")
+  name                String
+  chain               String
+  snapshotTime        DateTime                   @map("snapshot_time")
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  total_fund_invested Decimal                    @default(0) @db.Decimal(24, 8)
+  lendingBorrowing    ProtocolLendingBorrowing[]
+  liquidityPools      ProtocolLp[]
+  stakingLocking      ProtocolStakingLocking[]
+  tokenBalances       TokenBalance[]
+
+  @@unique([walletAddress, snapshotTime])
+  @@map("wallets")
+}
+
+model Tokens {
+  tokenId          String                     @id @map("token_id")
+  contractAddress  String                     @map("contract_address")
+  chain            String
+  tokenName        String                     @map("token_name")
+  tokenSymbol      String                     @map("token_symbol")
+  logoUrl          String?                    @map("logo_url")
+  verified         Boolean                    @map("verified")
+  decimals         Int                        @default(18)
+  createdAt        DateTime                   @default(now()) @map("created_at")
+  updatedAt        DateTime                   @updatedAt @map("updated_at")
+  lendingBorrowing ProtocolLendingBorrowing[]
+  lpToken1         ProtocolLp[]               @relation("Token1")
+  lpToken2         ProtocolLp[]               @relation("Token2")
+  lpRewards        ProtocolLpRewards[]
+  stakingLocking   ProtocolStakingLocking[]
+  stakingRewards   ProtocolStakingRewards[]
+  balances         TokenBalance[]
+
+  @@map("tokens")
+}
+
+model TokenBalance {
+  id            Int      @id @default(autoincrement())
+  walletAddress String   @map("wallet_address")
+  source        String
+  chain         String
+  tokenPrice    Decimal  @map("token_price") @db.Decimal(24, 8)
+  tokenAmount   Decimal  @map("token_amount") @db.Decimal(36, 18)
+  balanceUsd    Decimal  @map("balance_usd") @db.Decimal(24, 8)
+  snapshotTime  DateTime @map("snapshot_time")
+  createdAt     DateTime @default(now()) @map("created_at")
+  tokenId       String   @map("token_id")
+  walletId      Int      @map("wallet_id")
+  token         Tokens   @relation(fields: [tokenId], references: [tokenId])
+  wallet        Wallets  @relation(fields: [walletId], references: [id])
+
+  @@map("token_balance")
+}
+
+model ProtocolLendingBorrowing {
+  id            Int      @id @default(autoincrement())
+  protocolName  String   @map("protocol_name")
+  chain         String
+  walletAddress String   @map("wallet_address")
+  isBorrowed    Boolean  @map("is_borrowed")
+  tokenPrice    Decimal  @map("token_price") @db.Decimal(24, 8)
+  tokenAmount   Decimal  @map("token_amount") @db.Decimal(36, 18)
+  totalValue    Decimal  @map("total_value") @db.Decimal(24, 8)
+  healthRatio   Decimal? @map("health_ratio") @db.Decimal(10, 4)
+  borrowApy     Decimal? @map("borrow_apy") @db.Decimal(10, 4)
+  lendingApy    Decimal? @map("lending_apy") @db.Decimal(10, 4)
+  snapshotTime  DateTime @map("snapshot_time")
+  createdAt     DateTime @default(now()) @map("created_at")
+  tokenId       String   @map("token_id")
+  walletId      Int      @map("wallet_id")
+  token         Tokens   @relation(fields: [tokenId], references: [tokenId])
+  wallet        Wallets  @relation(fields: [walletId], references: [id])
+
+  @@map("protocol_lending_borrowing")
+}
+
+model ProtocolLp {
+  id              Int                 @id @default(autoincrement())
+  protocolName    String              @map("protocol_name")
+  chain           String
+  walletAddress   String              @map("wallet_address")
+  poolId          String              @map("pool_id")
+  isInRange       Boolean             @map("is_in_range")
+  token1Amount    Decimal             @map("token_1_amount") @db.Decimal(36, 18)
+  token1UsdValue  Decimal             @map("token_1_usd_value") @db.Decimal(24, 8)
+  token1Price     Decimal             @map("token_1_price") @db.Decimal(24, 8)
+  token2Amount    Decimal             @map("token_2_amount") @db.Decimal(36, 18)
+  token2UsdValue  Decimal             @map("token_2_usd_value") @db.Decimal(24, 8)
+  token2Price     Decimal             @map("token_2_price") @db.Decimal(24, 8)
+  totalLpUsdValue Decimal             @map("total_lp_usd_value") @db.Decimal(24, 8)
+  snapshotTime    DateTime            @map("snapshot_time")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  token1Id        String              @map("token_1_id")
+  token2Id        String              @map("token_2_id")
+  walletId        Int                 @map("wallet_id")
+  token1          Tokens              @relation("Token1", fields: [token1Id], references: [tokenId])
+  token2          Tokens              @relation("Token2", fields: [token2Id], references: [tokenId])
+  wallet          Wallets             @relation(fields: [walletId], references: [id])
+  rewards         ProtocolLpRewards[]
+
+  @@map("protocol_lp")
+}
+
+model ProtocolLpRewards {
+  id             Int        @id @default(autoincrement())
+  rewardAmount   Decimal    @map("reward_amount") @db.Decimal(36, 18)
+  rewardPrice    Decimal    @map("reward_price") @db.Decimal(24, 8)
+  rewardUsdValue Decimal    @map("reward_usd_value") @db.Decimal(24, 8)
+  snapshotTime   DateTime   @map("snapshot_time")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  lpId           Int        @map("lp_id")
+  rewardTokenId  String     @map("reward_token_id")
+  lp             ProtocolLp @relation(fields: [lpId], references: [id])
+  rewardToken    Tokens     @relation(fields: [rewardTokenId], references: [tokenId])
+
+  @@map("protocol_lp_rewards")
+}
+
+model ProtocolStakingLocking {
+  id            Int                      @id @default(autoincrement())
+  protocolName  String                   @map("protocol_name")
+  chain         String
+  walletAddress String                   @map("wallet_address")
+  tokenAmount   Decimal                  @map("token_amount") @db.Decimal(36, 18)
+  tokenPrice    Decimal                  @map("token_price") @db.Decimal(24, 8)
+  totalValue    Decimal                  @map("total_value") @db.Decimal(24, 8)
+  isLocked      Boolean                  @default(false) @map("is_locked")
+  lockDuration  String?                  @map("lock_duration")
+  stakingApy    Decimal?                 @map("staking_apy") @db.Decimal(10, 4)
+  lockApy       Decimal?                 @map("lock_apy") @db.Decimal(10, 4)
+  snapshotTime  DateTime                 @map("snapshot_time")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  tokenId       String                   @map("token_id")
+  walletId      Int                      @map("wallet_id")
+  token         Tokens                   @relation(fields: [tokenId], references: [tokenId])
+  wallet        Wallets                  @relation(fields: [walletId], references: [id])
+  rewards       ProtocolStakingRewards[]
+
+  @@map("protocol_staking_locking")
+}
+
+model ProtocolStakingRewards {
+  id             Int                    @id @default(autoincrement())
+  rewardAmount   Decimal                @map("reward_amount") @db.Decimal(36, 18)
+  rewardPrice    Decimal                @map("reward_price") @db.Decimal(24, 8)
+  rewardUsdValue Decimal                @map("reward_usd_value") @db.Decimal(24, 8)
+  snapshotTime   DateTime               @map("snapshot_time")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  stakingId      Int                    @map("staking_id")
+  rewardTokenId  String                 @map("reward_token_id")
+  rewardToken    Tokens                 @relation(fields: [rewardTokenId], references: [tokenId])
+  staking        ProtocolStakingLocking @relation(fields: [stakingId], references: [id])
+
+  @@map("protocol_staking_rewards")
+}
+
+model arbitrage_data {
+  id             Int      @default(autoincrement())
+  base_symbol    String   @db.VarChar(20)
+  quote_symbol   String   @db.VarChar(20)
+  source_low     String   @db.VarChar(50)
+  source_high    String   @db.VarChar(50)
+  price_low      Decimal  @db.Decimal(20, 10)
+  price_high     Decimal  @db.Decimal(20, 10)
+  price_diff_pct Decimal  @db.Decimal(10, 6)
+  timestamp      DateTime @db.Timestamptz(6)
+
+  @@id([id, timestamp])
+  @@index([timestamp(sort: Desc)])
+  @@index([base_symbol, quote_symbol], map: "idx_arbitrage_data_symbols")
+}
+
+model binance_orderbook_depth {
+  timestamp        DateTime @db.Timestamptz(6)
+  depth_percentage Decimal  @db.Decimal(5, 2)
+  buy_volume       Decimal  @db.Decimal(30, 10)
+  sell_volume      Decimal  @db.Decimal(30, 10)
+
+  @@id([timestamp, depth_percentage])
+  @@index([timestamp(sort: Desc)])
+}
+
+model liquidity_data {
+  id           Int      @default(autoincrement())
+  source       String   @db.VarChar(50)
+  base_symbol  String   @db.VarChar(20)
+  quote_symbol String   @db.VarChar(20)
+  liquidity    Decimal  @db.Decimal(30, 2)
+  timestamp    DateTime @db.Timestamptz(6)
+
+  @@id([id, timestamp])
+  @@index([source, base_symbol, quote_symbol], map: "idx_liquidity_data_source_symbols")
+  @@index([timestamp(sort: Desc)])
+}
+
+model orderbook_depth {
+  id           Int      @default(autoincrement())
+  source       String   @db.VarChar(50)
+  base_symbol  String   @db.VarChar(20)
+  quote_symbol String   @db.VarChar(20)
+  bid_volume   Decimal  @db.Decimal(30, 2)
+  ask_volume   Decimal  @db.Decimal(30, 2)
+  spread       Decimal  @db.Decimal(10, 6)
+  depth_ratio  Decimal  @db.Decimal(10, 6)
+  timestamp    DateTime @db.Timestamptz(6)
+
+  @@id([id, timestamp])
+  @@index([source, base_symbol, quote_symbol], map: "idx_orderbook_depth_source_symbols")
+  @@index([timestamp(sort: Desc)])
+}
+
+model price_data {
+  id           Int      @default(autoincrement())
+  source       String   @db.VarChar(50)
+  base_symbol  String   @db.VarChar(20)
+  quote_symbol String   @db.VarChar(20)
+  price        Decimal  @db.Decimal(20, 10)
+  volume_24h   Decimal? @db.Decimal(30, 2)
+  timestamp    DateTime @db.Timestamptz(6)
+
+  @@id([id, timestamp])
+  @@index([source, base_symbol, quote_symbol], map: "idx_price_data_source_symbols")
+  @@index([timestamp(sort: Desc)])
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model sui_arbitrage_data {
+  timestamp             DateTime @id @db.Timestamptz(6)
+  binance_price         Decimal  @db.Decimal(20, 10)
+  cetus_price           Decimal  @db.Decimal(20, 10)
+  bluefin_price         Decimal  @db.Decimal(20, 10)
+  binance_cetus_delta   Decimal  @db.Decimal(20, 10)
+  binance_bluefin_delta Decimal  @db.Decimal(20, 10)
+
+  @@index([timestamp(sort: Desc)], map: "idx_sui_arbitrage_data_timestamp")
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model sui_fee_growth_data {
+  timestamp     DateTime @db.Timestamptz(6)
+  pool_address  String   @db.VarChar(100)
+  fee_growth_a  Decimal  @db.Decimal(40, 10)
+  fee_growth_b  Decimal  @db.Decimal(40, 10)
+  token_a_price Decimal  @db.Decimal(30, 10)
+  token_b_price Decimal  @db.Decimal(30, 10)
+  fee_rate      Decimal  @db.Decimal(10, 6)
+
+  @@id([timestamp, pool_address])
+  @@index([timestamp(sort: Desc)], map: "idx_sui_fee_growth_data_timestamp")
+  @@index([timestamp(sort: Desc)])
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model sui_liquidity_data {
+  timestamp     DateTime @db.Timestamptz(6)
+  source        String   @db.VarChar(50)
+  liquidity_usd Decimal  @db.Decimal(30, 10)
+  volume_1h     Decimal? @db.Decimal(30, 10)
+  raw_data      Json?
+
+  @@id([timestamp, source])
+  @@index([timestamp(sort: Desc)], map: "idx_sui_liquidity_data_timestamp")
+  @@index([timestamp(sort: Desc)])
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model sui_price_data {
+  timestamp  DateTime @db.Timestamptz(6)
+  source     String   @db.VarChar(50)
+  sui_price  Decimal  @db.Decimal(20, 10)
+  volume_24h Decimal? @db.Decimal(30, 10)
+
+  @@id([timestamp, source])
+  @@index([timestamp(sort: Desc)], map: "idx_sui_price_data_timestamp")
+  @@index([timestamp(sort: Desc)])
+  @@index([source], map: "idx_price_source")
+  @@index([timestamp], map: "idx_price_timestamp")
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model all_crypto_prices {
+  time   DateTime @db.Timestamptz(6)
+  symbol String
+  open   Float?
+  high   Float?
+  low    Float?
+  close  Float?
+  volume Float?
+
+  @@id([time, symbol])
+  @@index([time(sort: Desc)])
+  @@index([symbol], map: "idx_all_crypto_prices_symbol")
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model solana_pool_data {
+  timestamp           DateTime @db.Timestamptz(6)
+  pool_address        String
+  token_a_amount      Decimal  @db.Decimal
+  token_b_amount      Decimal  @db.Decimal
+  sqrt_price          Decimal  @db.Decimal
+  liquidity           Decimal  @db.Decimal
+  tick_current        Int
+  fee_growth_global_a Decimal  @db.Decimal
+  fee_growth_global_b Decimal  @db.Decimal
+
+  @@id([timestamp, pool_address])
+  @@index([pool_address, timestamp(sort: Desc)], map: "idx_pool_data_pool_address")
+  @@index([timestamp(sort: Desc)])
+  @@index([pool_address, timestamp(sort: Desc)], map: "idx_solana_pool_data_pool_address")
+}
+
+/// This table has subclasses and requires additional setup for migrations. Visit https://pris.ly/d/table-inheritance for more info.
+model solana_price_data {
+  timestamp     DateTime @db.Timestamptz(6)
+  pool_address  String
+  price         Decimal  @db.Decimal
+  volume_24h    Decimal? @db.Decimal
+  liquidity_usd Decimal? @db.Decimal
+
+  @@id([timestamp, pool_address])
+  @@index([pool_address, timestamp(sort: Desc)], map: "idx_price_data_pool_address")
+  @@index([timestamp(sort: Desc)])
+  @@index([pool_address, timestamp(sort: Desc)], map: "idx_solana_price_data_pool_address")
+}
+
+model sui_arbitrage_data_v2 {
+  timestamp   DateTime @db.Timestamptz(6)
+  pair        String
+  source1     String
+  source2     String
+  price1      Decimal  @db.Decimal
+  price2      Decimal  @db.Decimal
+  price_delta Decimal  @db.Decimal
+
+  @@id([timestamp, pair, source1, source2])
+  @@index([timestamp], map: "idx_sui_arbitrage_data_v2_timestamp")
+}
+
+model sui_pool_data_v2 {
+  timestamp     DateTime @db.Timestamptz(6)
+  source        String
+  pair          String
+  pool_address  String
+  liquidity     Decimal  @db.Decimal
+  liquidity_usd Decimal  @db.Decimal
+  volume_1h     Decimal  @db.Decimal
+  volume_24h    Decimal? @db.Decimal
+  fee_rate      Decimal? @db.Decimal
+  raw_data      Json?
+
+  @@id([timestamp, pool_address])
+  @@index([timestamp], map: "idx_sui_pool_data_v2_timestamp")
+}
+
+model sui_price_data_v2 {
+  timestamp   DateTime @db.Timestamptz(6)
+  source      String
+  pair        String
+  price       Decimal  @db.Decimal
+  volume_24h  Decimal  @db.Decimal
+  data_source String?  @db.VarChar(50)
+
+  @@id([timestamp, source, pair])
+  @@index([timestamp], map: "idx_sui_price_data_v2_timestamp")
+}
+
+model sui_ticks_data {
+  timestamp                DateTime @db.Timestamptz(6)
+  pool_address             String
+  tick_index               Int
+  liquidity_net            Decimal? @db.Decimal
+  liquidity_gross          Decimal? @db.Decimal
+  sqrt_price               Decimal? @db.Decimal
+  fee_growth_outside_a     Decimal? @db.Decimal
+  fee_growth_outside_b     Decimal? @db.Decimal
+  seconds_outside          Decimal? @db.Decimal
+  tick_data                Json?
+  source                   String   @default("cetus")
+  object_id                String?
+  rewarders_growth_outside Json?
+
+  @@id([timestamp, pool_address, tick_index])
+  @@index([source], map: "idx_sui_ticks_data_source")
+  @@index([timestamp], map: "idx_sui_ticks_data_timestamp")
+}
+
+model BotMemory {
+  id            String   @id @default(uuid())
+  botId         String
+  action        String
+  timestamp     DateTime @default(now())
+  digest        String
+  coinA         Decimal
+  coinB         Decimal
+  price         Decimal
+  l_coefficient Decimal
+  value         Decimal
+  strategyData  Json
+  balances      Json
+
+  @@index([botId, timestamp])
+  @@map("bot_memory")
+}
+
+model funding_rate_history {
+  id            String   @id
+  walletAddress String
+  coin          String
+  fundingRate   Float
+  szi           Float?
+  usdc          Float?
+  timestamp     DateTime
+  hash          String
+  createdAt     DateTime @default(now())
+
+  @@index([coin, timestamp])
+  @@index([walletAddress, coin, timestamp])
+}
+
+model perp_fill {
+  id            String   @id
+  fillId        String   @unique
+  orderId       String
+  walletAddress String
+  coin          String
+  direction     String
+  side          String
+  price         Float
+  size          Float
+  value         Float
+  fee           Float
+  builderFee    Float?
+  closedPnl     Float
+  isCrossed     Boolean
+  startPosition Float?
+  timestamp     DateTime
+  hash          String
+  createdAt     DateTime @default(now())
+
+  @@index([coin, timestamp])
+  @@index([orderId, timestamp])
+}
+
+model BotMemoryV2 {
+  id            String   @id @default(uuid())
+  botId         String
+  action        String
+  timestamp     DateTime @default(now())
+  digest        String
+  coinA         Json
+  coinB         Json
+  price         Decimal
+  strategy      Json
+  balances      Json
+
+  @@index([botId, timestamp])
+  @@map("bot_memory_v2")
+}
+
+enum StrategyType {
+  CHASER
+  INRANGE
+}
+
+enum Protocol {
+  BLUEFIN
+  CETUS
+  ORCA
+  RAYDIUM
+}
+
+enum BotStatus {
+  START
+  RUN
+  REBALANCE
+  UPDATE
+  STOP
+}
+
+enum PollerStatus {
+  START
+  RUN
+  RESTART
+  STOP
+}
+
+model BotConfig {
+  id         String       @id @default(uuid())
+  botId      String       @unique
+  sender     String
+  protocol   Protocol
+  strategy   StrategyType
+  poolId     String
+  slippage   Float
+  params     Json?
+  continue   Boolean?
+  status     BotStatus
+  instanceId String
+  timestamp  DateTime     @default(now())
+
+  @@index([botId])
+  @@map("bot_config")
+}
+
+model Pollers {
+  id         String       @id @default(uuid())
+  pollerId   String
+  protocol   Protocol
+  poolId     String       @unique
+  status     PollerStatus
+
+  @@index([poolId])
+  @@map("pollers")
+}
