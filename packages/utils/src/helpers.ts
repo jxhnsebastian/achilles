@@ -1,8 +1,12 @@
 import Decimal from "decimal.js";
-export const HUD_DATA_ALERTS_CHANNEL = "C08F9TM8UJW";
-export const checkFrequency = 2000;
-export const maxRetries = 5;
-export const wait = 2;
+import {
+  ProtocolLabels,
+  StatusLabels,
+  StrategyLabels,
+  getIdMap,
+  maxRetries,
+} from "./constants";
+import { BotConfig, StrategyParams } from "./types";
 
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -62,4 +66,35 @@ export async function fetchWithRetry<T>(
       throw error;
     }
   }
+}
+
+export function convertBotConfig(config: any): BotConfig {
+  const params: StrategyParams = config.params;
+
+  if (params?.coinA) {
+    params.coinA = {
+      ...params.coinA,
+      amount: new Decimal(params.coinA.amount),
+    };
+  }
+
+  if (params?.coinB) {
+    params.coinB = {
+      ...params.coinB,
+      amount: new Decimal(params.coinB.amount),
+    };
+  }
+
+  return {
+    botId: config.botId,
+    sender: config.sender,
+    protocol: getIdMap(ProtocolLabels)[config.protocol as string],
+    strategy: getIdMap(StrategyLabels)[config.strategy as string],
+    poolId: config.poolId,
+    slippage: config.slippage,
+    params,
+    continue: config.continue || false,
+    status: getIdMap(StatusLabels)[config.status as string],
+    instanceId: config.instanceId,
+  };
 }

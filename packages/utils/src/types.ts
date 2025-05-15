@@ -98,7 +98,7 @@ export interface CurrentTick {
 }
 
 export interface PoolTick {
-  liquidity: string;
+  liquidity?: string;
   price: string;
   tick: number;
 }

@@ -1,7 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import fs from "fs";
 import path from "path";
-import { HUD_DATA_ALERTS_CHANNEL } from "./helpers";
+import { HUD_DATA_ALERTS_CHANNEL } from "./constants";
 
 export class SlackBot {
   private client: WebClient;

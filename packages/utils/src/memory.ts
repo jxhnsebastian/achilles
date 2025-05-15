@@ -10,7 +10,6 @@ import type {
   ConvertInfo,
   StrategyParams,
 } from "./types";
-import { serialize } from "./helpers";
 
 export class Memory {
   private prepareForDatabase(entry: BotMemoryEntry): any {
@@ -19,21 +18,21 @@ export class Memory {
       action: entry.action,
       timestamp: new Date(entry.timestamp),
       digest: entry.digest,
-      coinA: serialize({
+      coinA: {
         ...entry.coinA,
-        amount: this.validateDecimal(entry.coinA.amount),
-      }),
-      coinB: serialize({
+        amount: this.validateDecimal(entry.coinA.amount).toString(),
+      },
+      coinB: {
         ...entry.coinB,
-        amount: this.validateDecimal(entry.coinB.amount),
-      }),
+        amount: this.validateDecimal(entry.coinB.amount).toString(),
+      },
       strategy: this.serializeStrategy(entry.strategy),
       balances: this.serializeBalances(entry.balances),
       price: entry.price.toString(),
     };
   }
 
-  private serializeStrategy(
+  serializeStrategy(
     strategy: ChaserInfo | InRangeInfo | ConvertInfo | StrategyParams
   ): any {
     return JSON.parse(
@@ -48,7 +47,7 @@ export class Memory {
   ): any {
     return balances.map((balance) => ({
       coinType: balance.coinType,
-      amount: balance.amount.toString(),
+      amount: this.validateDecimal(balance.amount).toString(),
     }));
   }
 
@@ -134,7 +133,7 @@ export class Memory {
       });
 
       return memories
-        .map((record: any) => this.convertFromDatabase(record))
+        .map((record) => this.convertFromDatabase(record))
         .reverse();
     } catch (error) {
       console.error(`Error retrieving memories for bot ${botId}:`, error);

@@ -328,8 +328,8 @@ export class TokenRegistry {
     return (
       this.tokens.get(address) ?? {
         address: address,
-        name: "",
-        symbol: "",
+        name: address,
+        symbol: address,
         uri: "",
         iconUrl: "",
         decimals: 1,
