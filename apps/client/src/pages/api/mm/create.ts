@@ -98,7 +98,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const botData = req.body as Omit<BotParameters, "id" | "status">;
+    const botData = { ...req.body, exchange: req.body?.exchange?.toLowerCase() } as Omit<
+      BotParameters,
+      "id" | "status"
+    >;
 
     // Check if all required fields are present
     if (
