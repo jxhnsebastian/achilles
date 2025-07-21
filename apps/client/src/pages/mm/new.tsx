@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   LineChart,
@@ -21,7 +20,6 @@ import {
 } from "recharts";
 import {
   Play,
-  Pause,
   Square,
   Settings,
   TrendingUp,
@@ -227,29 +225,6 @@ export default function MarketMakerPage() {
     } catch (error) {
       console.error("Failed to stop bot:", error);
       toast.error("Failed to stop bot");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSaveParameters = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/market-maker/parameters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parameters),
-      });
-
-      if (response.ok) {
-        toast.success("Parameters saved successfully");
-      } else {
-        const error = await response.json();
-        toast.error(error.error || "Failed to save parameters");
-      }
-    } catch (error) {
-      console.error("Failed to save parameters:", error);
-      toast.error("Failed to save parameters");
     } finally {
       setLoading(false);
     }
