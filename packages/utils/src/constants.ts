@@ -28,13 +28,13 @@ export const StatusLabels: {
 };
 
 export const PollerStatusLabels: {
-    [key: number]: "START" | "RUN" | "RESTART" | "STOP";
-  } = {
-    0: "START",
-    1: "RUN",
-    2: "RESTART",
-    3: "STOP",
-  };
+  [key: number]: "START" | "RUN" | "RESTART" | "STOP";
+} = {
+  0: "START",
+  1: "RUN",
+  2: "RESTART",
+  3: "STOP",
+};
 
 export function getIdMap<U extends string>(
   forwardMap: Record<number, U>

@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/client"
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "linux-musl", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -495,19 +496,51 @@ model perp_fill {
 }
 
 model BotMemoryV2 {
-  id            String   @id @default(uuid())
-  botId         String
-  action        String
-  timestamp     DateTime @default(now())
-  digest        String
-  coinA         Json
-  coinB         Json
-  price         Decimal
-  strategy      Json
-  balances      Json
+  id        String    @id @default(uuid())
+  botId     String
+  action    String
+  timestamp DateTime  @default(now())
+  digest    String
+  coinA     Json
+  coinB     Json
+  price     Decimal
+  strategy  Json
+  balances  Json
+  user      String?
+  botConfig BotConfig @relation(fields: [botId], references: [botId])
 
   @@index([botId, timestamp])
   @@map("bot_memory_v2")
+}
+
+model BotConfig {
+  id          String        @id @default(uuid())
+  botId       String        @unique
+  sender      String
+  protocol    Protocol
+  strategy    StrategyType
+  poolId      String
+  slippage    Float
+  params      Json?
+  continue    Boolean?
+  status      BotStatus
+  instanceId  String
+  timestamp   DateTime      @default(now())
+  botMemories BotMemoryV2[]
+
+  @@index([botId])
+  @@map("bot_config")
+}
+
+model Pollers {
+  id       String       @id @default(uuid())
+  pollerId String
+  protocol Protocol
+  poolId   String       @unique
+  status   PollerStatus
+
+  @@index([poolId])
+  @@map("pollers")
 }
 
 enum StrategyType {
@@ -537,31 +570,16 @@ enum PollerStatus {
   STOP
 }
 
-model BotConfig {
-  id         String       @id @default(uuid())
-  botId      String       @unique
-  sender     String
-  protocol   Protocol
-  strategy   StrategyType
-  poolId     String
-  slippage   Float
-  params     Json?
-  continue   Boolean?
-  status     BotStatus
-  instanceId String
-  timestamp  DateTime     @default(now())
+model OrderBookBot {
+  id              String        @id @default(uuid())
+  orderSize       Float
+  maxPositionSize Float
+  gamma           Float
+  ticker          String
+  exchange        String
+  duration        Float
+  status          String
+  instanceId      String
 
-  @@index([botId])
-  @@map("bot_config")
-}
-
-model Pollers {
-  id         String       @id @default(uuid())
-  pollerId   String
-  protocol   Protocol
-  poolId     String       @unique
-  status     PollerStatus
-
-  @@index([poolId])
-  @@map("pollers")
+  @@map("order_book_bot")
 }

@@ -142,6 +142,7 @@ export interface BotMemoryEntry {
     amount: Decimal;
   }[];
   price: Decimal;
+  user?: string;
 }
 
 export interface TokenPriceDetails {

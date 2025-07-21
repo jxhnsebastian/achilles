@@ -11,6 +11,9 @@ import {
   RaydiumLoadParams,
   Raydium as RaydiumSDK,
 } from "@raydium-io/raydium-sdk-v2";
+import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
+import { QueryChain } from "@firefly-exchange/library-sui/dist/src/spot";
+import { initCetusSDK } from "@cetusprotocol/cetus-sui-clmm-sdk";
 
 export const getRpc = (rpcUrl: string) => {
   const endpoint = rpcUrl || "https://api.mainnet-beta.solana.com";
@@ -39,7 +42,7 @@ export async function getOrcaPoolInfo(poolAddress: string) {
   );
 
   if (!poolInfo || !tokenA || !tokenB)
-    throw new Error("Failed to set pool config.");
+    throw new Error("Failed to get pool config.");
 
   return {
     address: poolInfo.address,
@@ -67,7 +70,7 @@ export async function getRaydiumPoolInfo(poolAddress: string) {
   const raydium = await RaydiumSDK.load(loadParams);
   const poolInfo = (await raydium.clmm.getPoolInfoFromRpc(poolAddress))
     .poolInfo;
-  if (!poolInfo) throw new Error("Failed to set pool config.");
+  if (!poolInfo) throw new Error("Failed to get pool config.");
 
   return {
     address: poolInfo.id,
@@ -79,6 +82,60 @@ export async function getRaydiumPoolInfo(poolAddress: string) {
     coinB: {
       address: poolInfo.mintB.address,
       decimals: poolInfo.mintB.decimals,
+    },
+  };
+}
+
+export async function getBluefinPoolInfo(poolAddress: string) {
+  const client = new SuiClient({
+    url: getFullnodeUrl("mainnet"),
+  });
+
+  const qc = new QueryChain(client);
+
+  const pool = await qc.getPool(poolAddress);
+  if (!pool) throw new Error("Failed to get pool config.");
+
+  return {
+    address: pool.id,
+    tickSpacing: pool.ticks_manager.tick_spacing,
+    coinA: {
+      address: pool.coin_a.address,
+      decimals: pool.coin_a.decimals,
+    },
+    coinB: {
+      address: pool.coin_b.address,
+      decimals: pool.coin_b.decimals,
+    },
+  };
+}
+
+export async function getCetusPoolInfo(poolAddress: string) {
+  const cetusClmmSDK = initCetusSDK({ network: "mainnet" });
+  const client = new SuiClient({
+    url: getFullnodeUrl("mainnet"),
+  });
+
+  const pool = await cetusClmmSDK.Pool.getPool(poolAddress);
+  const coinA = await client.getCoinMetadata({
+    coinType: pool.coinTypeA,
+  });
+  const coinB = await client.getCoinMetadata({
+    coinType: pool.coinTypeB,
+  });
+
+  if (!pool || !coinA || !coinB) throw new Error("Failed to get pool config.");
+
+  return {
+    address: pool.poolAddress,
+    tickSpacing: pool.tickSpacing,
+    coinA: {
+      address: pool.coinTypeA,
+      decimals: coinA.decimals,
+    },
+    coinB: {
+      address: pool.coinTypeB,
+      decimals: coinB.decimals,
     },
   };
 }

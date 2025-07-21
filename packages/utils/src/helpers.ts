@@ -1,19 +1,12 @@
 import Decimal from "decimal.js";
-import {
-  ProtocolLabels,
-  StatusLabels,
-  StrategyLabels,
-  getIdMap,
-  maxRetries,
-} from "./constants";
+import { ProtocolLabels, StatusLabels, StrategyLabels, getIdMap, maxRetries } from "./constants";
 import { BotConfig, StrategyParams } from "./types";
 
-export const sleep = (ms: number) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
+export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const serialize = (object: any) => {
   return JSON.stringify(object, (key, value) =>
-    value instanceof Decimal ? value.toString() : value
+    value instanceof Decimal ? value.toString() : value,
   );
 };
 
@@ -26,7 +19,7 @@ export const serialize = (object: any) => {
 export async function fetchWithRetry<T>(
   url: string,
   options?: RequestInit,
-  log: any = console.log
+  log: any = console.log,
 ): Promise<T> {
   let retryCount = 0;
 
@@ -41,10 +34,14 @@ export async function fetchWithRetry<T>(
         continue;
       }
 
+      if (response.status === 404) {
+        log(`Error for ${url}: 404 not found`);
+        retryCount = maxRetries;
+        throw new Error(`Error for ${url}: 404 not found`);
+      }
+
       if (!response.ok) {
-        throw new Error(
-          `Request failed with status ${response.status}: ${response.statusText}`
-        );
+        throw new Error(`Request failed with status ${response.status}: ${response.statusText}`);
       }
 
       return (await response.json()) as T;
@@ -53,9 +50,7 @@ export async function fetchWithRetry<T>(
         log(
           `Error for ${url}: ${
             error?.message ?? "Unknown error"
-          }, retrying in ${2 ** retryCount}s (attempt ${
-            retryCount + 1
-          }/${maxRetries})`
+          }, retrying in ${2 ** retryCount}s (attempt ${retryCount + 1}/${maxRetries})`,
         );
 
         await sleep(2 ** retryCount * 1000);

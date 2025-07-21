@@ -1,5 +1,5 @@
 {
-  "name": "@lp-tools/utils",
+  "name": "@achilles/utils",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -30,6 +30,9 @@
     "@orca-so/whirlpools-client": "^1.0.5",
     "@raydium-io/raydium-sdk-v2": "^0.1.124-alpha",
     "@solana/spl-token": "^0.4.13",
-    "@lp-tools/db": "workspace:*"
+    "@firefly-exchange/library-sui": "^2.5.8",
+    "@cetusprotocol/cetus-sui-clmm-sdk": "^5.3.3",
+    "@achilles/db": "workspace:*",
+    "@achilles/redpanda": "workspace:*"
   }
 }

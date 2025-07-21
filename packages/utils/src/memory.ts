@@ -1,5 +1,6 @@
 import { Decimal } from "decimal.js";
-import { prisma } from "@lp-tools/db";
+import { prisma } from "@achilles/db";
+// import { RedpandaClient, SASLMechanism } from "@achilles/redpanda";
 import type {
   UserPosition,
   PositionBalances,
@@ -10,6 +11,19 @@ import type {
   ConvertInfo,
   StrategyParams,
 } from "./types";
+
+// const redpanda = new RedpandaClient({
+//   brokers: [process.env.REDPANDA_BROKER_URL ?? ""],
+//   ssl: true,
+//   sasl: {
+//     mechanism: (process.env.REDPANDA_SASL_MECHANISM ?? "scram-sha-256") as SASLMechanism,
+//     username: process.env.REDPANDA_USERNAME ?? "",
+//     password: process.env.REDPANDA_PASSWORD ?? "",
+//   },
+//   logLevel: 5,
+// });
+
+// await redpanda.connect();
 
 export class Memory {
   private prepareForDatabase(entry: BotMemoryEntry): any {
@@ -29,22 +43,19 @@ export class Memory {
       strategy: this.serializeStrategy(entry.strategy),
       balances: this.serializeBalances(entry.balances),
       price: entry.price.toString(),
+      user: entry.user,
     };
   }
 
-  serializeStrategy(
-    strategy: ChaserInfo | InRangeInfo | ConvertInfo | StrategyParams
-  ): any {
+  serializeStrategy(strategy: ChaserInfo | InRangeInfo | ConvertInfo | StrategyParams): any {
     return JSON.parse(
       JSON.stringify(strategy, (key, value) =>
-        value instanceof Decimal ? value.toString() : value
-      )
+        value instanceof Decimal ? value.toString() : value,
+      ),
     );
   }
 
-  private serializeBalances(
-    balances: { coinType: string; amount: Decimal }[]
-  ): any {
+  private serializeBalances(balances: { coinType: string; amount: Decimal }[]): any {
     return balances.map((balance) => ({
       coinType: balance.coinType,
       amount: this.validateDecimal(balance.amount).toString(),
@@ -54,37 +65,26 @@ export class Memory {
   convertFromDatabase(record: any): BotMemoryEntry {
     return {
       botId: record.botId,
-      action: record.action as
-        | "open"
-        | "close"
-        | "swap"
-        | "collect"
-        | "convert_fees"
-        | "update",
+      action: record.action as "open" | "close" | "swap" | "collect" | "convert_fees" | "update",
       timestamp: new Date(record.timestamp).getTime(),
       strategy: this.deserializeStrategy(record.strategy),
       digest: record.digest,
       coinA: this.deserializeBalances(record.coinA),
       coinB: this.deserializeBalances(record.coinB),
-      balances: record.balances.map((balance: any) =>
-        this.deserializeBalances(balance)
-      ),
+      balances: record.balances.map((balance: any) => this.deserializeBalances(balance)),
       price: new Decimal(record.price),
+      user: record?.user ?? undefined,
     };
   }
 
   private deserializeStrategy(
-    strategyData: any
+    strategyData: any,
   ): ChaserInfo | InRangeInfo | ConvertInfo | StrategyParams {
     const strategy = strategyData;
 
     if (strategy.position) {
-      strategy.position.lower_price = new Decimal(
-        strategy.position.lower_price
-      );
-      strategy.position.upper_price = new Decimal(
-        strategy.position.upper_price
-      );
+      strategy.position.lower_price = new Decimal(strategy.position.lower_price);
+      strategy.position.upper_price = new Decimal(strategy.position.upper_price);
     }
 
     if (strategy.coinA) {
@@ -108,11 +108,37 @@ export class Memory {
     };
   }
 
+  async redpandaStream(entry: BotMemoryEntry, topic: string, botId: string) {
+    try {
+      const data = this.prepareForDatabase(entry);
+      const strategy = entry.strategy as ChaserInfo | InRangeInfo;
+      let message: any = {
+        ...data,
+        coinA_coinType: entry.coinA.coinType,
+        coinA_amount: this.validateDecimal(entry.coinB.amount).toString(),
+        coinB_coinType: entry.coinA.coinType,
+        coinB_amount: this.validateDecimal(entry.coinA.amount).toString(),
+      };
+      if (strategy.position)
+        Object.entries(strategy.position).forEach(([key, value]) => {
+          if (key === "lower_price" || key === "upper_price") {
+            message[`position_${key}`] = this.validateDecimal(value).toString();
+          } else {
+            message[`position_${key}`] = value;
+          }
+        });
+
+      // await redpanda.sendMessage(message, { topic });
+    } catch (error) {
+      console.error(`Error streaming memory to redpanda for bot ${botId}:`, error);
+      throw error;
+    }
+  }
+
   public async addMemory(entry: BotMemoryEntry): Promise<void> {
     try {
-      await prisma.botMemoryV2.create({
-        data: this.prepareForDatabase(entry),
-      });
+      await prisma.botMemoryV2.create({ data: this.prepareForDatabase(entry) });
+      await this.redpandaStream(entry, "bot-memory-stream", entry.botId);
     } catch (error) {
       console.error(`Error persisting memory for bot ${entry.botId}:`, error);
       throw error;
@@ -122,7 +148,7 @@ export class Memory {
   public async getMemories(
     botId: string,
     limit: number = 10,
-    action?: string
+    action?: string,
   ): Promise<BotMemoryEntry[]> {
     try {
       const whereClause = action ? { botId, action } : { botId };
@@ -132,9 +158,7 @@ export class Memory {
         take: limit,
       });
 
-      return memories
-        .map((record) => this.convertFromDatabase(record))
-        .reverse();
+      return memories.map((record) => this.convertFromDatabase(record)).reverse();
     } catch (error) {
       console.error(`Error retrieving memories for bot ${botId}:`, error);
       return [];
@@ -159,12 +183,10 @@ export class Memory {
    */
   public async getMostRecentMemory(
     botId: string,
-    action?: string
+    action?: string,
   ): Promise<BotMemoryEntry | undefined> {
     try {
-      const whereClause = action
-        ? { botId, action }
-        : { botId, NOT: { action: "convert_fees" } };
+      const whereClause = action ? { botId, action } : { botId, NOT: { action: "convert_fees" } };
 
       const memory = await prisma.botMemoryV2.findFirst({
         where: whereClause,
@@ -173,10 +195,7 @@ export class Memory {
 
       return memory ? this.convertFromDatabase(memory) : undefined;
     } catch (error) {
-      console.error(
-        `Error retrieving most recent memory for bot ${botId}:`,
-        error
-      );
+      console.error(`Error retrieving most recent memory for bot ${botId}:`, error);
       return undefined;
     }
   }
@@ -186,11 +205,9 @@ export class Memory {
     price: Decimal,
     tickDiff: number,
     imbalance: Decimal = new Decimal(0),
-    feeRate: Decimal = new Decimal(0)
+    feeRate: Decimal = new Decimal(0),
   ): Decimal {
-    const V = value.mul(
-      new Decimal(1).sub(new Decimal(0.5).sub(imbalance).mul(feeRate))
-    );
+    const V = value.mul(new Decimal(1).sub(new Decimal(0.5).sub(imbalance).mul(feeRate)));
 
     const sqrtP = price.sqrt();
     const denominator = sqrtP
@@ -218,7 +235,7 @@ export class Memory {
     price: Decimal,
     digest: string = "",
     position?: UserPosition,
-    step?: ChaserStep
+    step?: ChaserStep,
   ): Promise<void> {
     let strategyInfo: ChaserInfo | InRangeInfo | ConvertInfo;
 

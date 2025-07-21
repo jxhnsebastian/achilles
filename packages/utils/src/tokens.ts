@@ -17,6 +17,8 @@ interface PriceData {
   [address: string]: number;
 }
 
+const faultyTokens = ["6d74813ee17291d5be18a355fe4d43fd300d625caea6554d49f740e7d112141e"];
+
 export class TokenRegistry {
   private tokens: Map<string, TokenMetadata>;
   private suiClient: SuiClient;
@@ -34,7 +36,10 @@ export class TokenRegistry {
   private getChainType(address: string): "solana" | "sui" {
     // Simplistic check: Solana addresses are 32-44 characters long, base58 encoded
     // Sui addresses are 66 characters long (0x + 64 hex chars)
-    if (address.startsWith("0x") && address.split("::")[0].length === 66) {
+    if (
+      address.startsWith("0x") &&
+      (address.split("::")[0].length === 66 || address.split("::").length === 3)
+    ) {
       return "sui";
     }
     return "solana";
@@ -43,9 +48,8 @@ export class TokenRegistry {
   private async indexSolanaTokens(addresses: string[]): Promise<void> {
     for (const address of addresses) {
       try {
-        const asset = await fetchWithRetry<any>(
-          `https://api.jup.ag/tokens/v1/token/${address}`
-        );
+        throw new Error('Update api key for jup!')
+        const asset = await fetchWithRetry<any>(`https://api.jup.ag/tokens/v1/token/${address}`);
         let pythId = await this.getPythIdForSymbol(asset.symbol);
 
         const tokenMetadata: TokenMetadata = {
@@ -113,9 +117,7 @@ export class TokenRegistry {
     }
   }
 
-  private async getPythIdForSymbol(
-    symbol: string
-  ): Promise<string | undefined> {
+  private async getPythIdForSymbol(symbol: string): Promise<string | undefined> {
     try {
       const normalizedSymbol = symbol.trim().toUpperCase();
       if (this.pythSymbolToIdMap.has(normalizedSymbol)) {
@@ -124,12 +126,12 @@ export class TokenRegistry {
 
       const data = await fetchWithRetry(
         `https://hermes.pyth.network/v2/price_feeds?query=${encodeURIComponent(
-          normalizedSymbol
-        )}&asset_type=crypto`
+          normalizedSymbol,
+        )}&asset_type=crypto`,
       );
       if (data && Array.isArray(data) && data.length > 0) {
         const exactMatch =
-          data.find((feed) => feed.attributes.base === normalizedSymbol) ??
+          data.find((feed) => feed.attributes.display_symbol === `${normalizedSymbol}/USD`) ??
           data[0];
 
         if (exactMatch) {
@@ -148,15 +150,14 @@ export class TokenRegistry {
     }
   }
 
-  private async getPythPrice(
-    timeInSec: number,
-    ids: string[]
-  ): Promise<Record<string, number>> {
-    const idsQueryParams = ids.map((id) => `ids%5B%5D=${id}`).join("&");
+  private async getPythPrice(timeInSec: number, ids: string[]): Promise<Record<string, number>> {
+    const idsQueryParams = ids
+      .filter((id) => !faultyTokens.includes(id))
+      .map((id) => `ids%5B%5D=${id}`)
+      .join("&");
+
     const data = await fetchWithRetry<any>(
-      `https://hermes.pyth.network/v2/updates/price/${timeInSec.toFixed(
-        0
-      )}?${idsQueryParams}`
+      `https://hermes.pyth.network/v2/updates/price/${timeInSec.toFixed(0)}?${idsQueryParams}`,
     );
 
     const result: Record<string, number> = {};
@@ -168,8 +169,7 @@ export class TokenRegistry {
             throw new Error(`Stale price feed for ID: ${item.id}!`);
           }
 
-          const calculatedPrice =
-            item.price.price * Math.pow(10, item.price.expo);
+          const calculatedPrice = item.price.price * Math.pow(10, item.price.expo);
           result[item.id] = calculatedPrice;
         }
       }
@@ -178,26 +178,28 @@ export class TokenRegistry {
     return result;
   }
 
-  private async getJupiterPrices(
-    tokenMints: string[]
-  ): Promise<Record<string, number>> {
+  private async getJupiterPrices(tokenMints: string[]): Promise<Record<string, number>> {
     try {
+      throw new Error('Update api key for jup!')
       const url = `https://api.jup.ag/price/v2?ids=${tokenMints.join(",")}`;
       const { data } = await fetchWithRetry<{
         data: Record<string, TokenPriceDetails>;
       }>(url);
 
       // tokenId -> price mapping
-      return Object.entries(data).reduce((acc, [tokenId, details]) => {
-        if (details === null) {
-          // jupiter didn't have a price; return 0
-          acc[tokenId] = 0;
-          return acc;
-        }
+      return Object.entries(data).reduce(
+        (acc, [tokenId, details]) => {
+          if (details === null) {
+            // jupiter didn't have a price; return 0
+            acc[tokenId] = 0;
+            return acc;
+          }
 
-        acc[tokenId] = Number(details.price);
-        return acc;
-      }, {} as Record<string, number>);
+          acc[tokenId] = Number(details.price);
+          return acc;
+        },
+        {} as Record<string, number>,
+      );
     } catch (error) {
       console.error("Error fetching token prices:", error);
       throw error;
@@ -227,9 +229,7 @@ export class TokenRegistry {
     }
   }
 
-  async getTokensMetadata(
-    addresses: string[]
-  ): Promise<{ [address: string]: TokenMetadata }> {
+  async getTokensMetadata(addresses: string[]): Promise<{ [address: string]: TokenMetadata }> {
     const result: { [address: string]: TokenMetadata } = {};
     const missingAddresses: string[] = [];
 
@@ -256,17 +256,12 @@ export class TokenRegistry {
     return result;
   }
 
-  async getTokensPrices(
-    addresses: string[],
-    timeInSec?: number
-  ): Promise<PriceData> {
+  async getTokensPrices(addresses: string[], timeInSec?: number): Promise<PriceData> {
     let result: PriceData = {};
     const pythIds: string[] = [];
     const addressToPythId: Map<string, string> = new Map();
 
-    const missingAddresses: string[] = addresses.filter(
-      (address) => !this.tokens.has(address)
-    );
+    const missingAddresses: string[] = addresses.filter((address) => !this.tokens.has(address));
 
     if (missingAddresses.length > 0) await this.indexTokens(missingAddresses);
     const solAddresses = [];
@@ -303,7 +298,7 @@ export class TokenRegistry {
       try {
         const pythPrices = await this.getPythPrice(
           timeInSec || Math.floor(Date.now() / 1000 - 1),
-          pythIds
+          pythIds,
         );
 
         // Map Pyth IDs back to addresses

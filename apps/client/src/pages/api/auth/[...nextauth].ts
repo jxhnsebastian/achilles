@@ -1,0 +1,73 @@
+import NextAuth, { NextAuthOptions } from "next-auth";
+import GoogleProvider from "next-auth/providers/google";
+// import CredentialsProvider from "next-auth/providers/credentials";
+
+const allowedEmails: string[] = [];
+
+export const authOptions: NextAuthOptions = {
+  providers: [
+    GoogleProvider({
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          prompt: "consent",
+          access_type: "offline",
+          response_type: "code",
+        },
+      },
+    }),
+  ],
+  session: {
+    strategy: "jwt",
+  },
+  secret: process.env.NEXTAUTH_SECRET,
+  pages: {
+    error: "/401",
+    signIn: "/login",
+  },
+
+  callbacks: {
+    async signIn({ account, profile }) {
+      if (
+        account &&
+        profile &&
+        account.provider === "google" &&
+        profile.email &&
+        allowedEmails.includes(profile.email)
+      ) {
+        return true;
+      }
+      return false;
+    },
+
+    async session({ session }) {
+      //   if (session.user && session.user.email) {
+      //     try {
+      //       const client = await pool.connect();
+      //       const result = await client.query(
+      //         'SELECT role FROM public.user_details WHERE email_id = $1',
+      //         [session.user.email]
+      //       );
+      //       client.release();
+
+      //       if (result.rows.length > 0) {
+      //         // @ts-ignore
+      //         session.user.role = result.rows[0].role.toLowerCase();
+      //         console.log("User role:", result.rows[0].role);
+      //       } else {
+      //         // @ts-ignore
+      //         session.user.role = "default";
+      //       }
+      //     } catch (error) {
+      //       console.error("Error fetching user role:", error);
+      //       // @ts-ignore
+      //       session.user.role = "default";
+      //     }
+      //   }
+      return session;
+    },
+  },
+};
+
+export default NextAuth(authOptions);
