@@ -37,6 +37,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { tickers } from "@/lib/tokens";
 
 export interface BotParameters {
   id: string;
