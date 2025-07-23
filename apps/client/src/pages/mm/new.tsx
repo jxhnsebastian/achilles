@@ -384,15 +384,28 @@ export default function MarketMakerPage() {
                           placeholder="1000"
                         />
                       </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="ticker">Ticker</Label>
-                        <Input
-                          id="ticker"
-                          type="text"
-                          value={parameters.ticker}
-                          onChange={(e) => handleParameterChange("ticker", e.target.value || "")}
-                          placeholder="BTCUSDT"
-                        />
+                      <div className="grid grid-cols-4 items-center gap-4">
+                        <Label htmlFor="exchange" className="text-right">
+                          Ticker
+                        </Label>
+                        <div className="flex items-center gap-2">
+                          <Select
+                            value={parameters.ticker}
+                            onValueChange={(value) => handleParameterChange("ticker", value || "")}
+                            // disabled={isEditMode}
+                          >
+                            <SelectTrigger id="ticker" className="col-span-3">
+                              <SelectValue placeholder="Select a ticker" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.keys(tickers).map((address) => (
+                                <SelectItem key={address} value={address}>
+                                  {address}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
                       <div className="grid grid-cols-4 items-center gap-4">
                         <Label htmlFor="exchange" className="text-right">
