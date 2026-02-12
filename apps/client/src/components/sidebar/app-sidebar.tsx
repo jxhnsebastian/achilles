@@ -13,6 +13,7 @@ import {
   IconPropeller,
   IconDroplet,
   IconRobot,
+  IconEyeDollar,
 } from "@tabler/icons-react";
 
 import { NavDocuments } from "@/components/sidebar/nav-documents";
@@ -56,6 +57,11 @@ const data: SidebarData = {
       icon: IconDashboard,
     },
     {
+      title: "Parlays",
+      url: "/parlays",
+      icon: IconEyeDollar,
+    },
+    {
       title: "Pools",
       url: "#",
       icon: IconDroplet,
@@ -69,11 +75,6 @@ const data: SidebarData = {
           title: "Pollers",
           url: "/lp/pollers",
           icon: IconPropeller,
-        },
-        {
-          title: "Market Maker",
-          url: "/lp/mm-bot",
-          icon: IconRobot,
         },
       ],
     },
