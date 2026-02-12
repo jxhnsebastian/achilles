@@ -2,14 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Loader2, ChevronRight } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   ApprovedParlay,
   PolymarketMarket,
@@ -35,11 +34,11 @@ export default function ParlayAnalyzerPage() {
   // ---------------- submit ----------------
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setRequestId(null)
+    setRequestId(null);
     setPhase("starting");
-    setMarketIds([])
-    setParlays([])
-    setRejectedParlays([])
+    setMarketIds([]);
+    setParlays([]);
+    setRejectedParlays([]);
 
     const res = await fetch("/api/parlay/analyze", {
       method: "POST",

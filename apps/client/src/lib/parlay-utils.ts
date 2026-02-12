@@ -10,7 +10,7 @@ import {
 } from "./parlay-types";
 import { Pool } from "pg";
 import OpenAI from "openai";
-import { Index, Pinecone, RecordMetadata } from "@pinecone-database/pinecone";
+import { Index, RecordMetadata } from "@pinecone-database/pinecone";
 
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -372,10 +372,7 @@ export async function fetchTweetThread(
   return topTweets;
 }
 
-async function buildThreadQuery(
-  openai: OpenAI,
-  tweets: TwitterAPITweet[]
-): Promise<string> {
+async function buildThreadQuery(openai: OpenAI, tweets: TwitterAPITweet[]): Promise<string> {
   const concatenated = tweets.map((t) => t.text).join("\n");
 
   // For very short threads, just return the text
@@ -430,7 +427,7 @@ SEARCH QUERY:`;
         max_tokens: 200, // Keep it concise
       }),
     { maxRetries: 2, initialDelay: 1000 },
-    "Thread query generation"
+    "Thread query generation",
   );
 
   const queryText = response.choices[0].message.content?.trim() || concatenated;
@@ -460,7 +457,7 @@ export async function searchMarketsFromThread(
   pineconeIndex: Index<RecordMetadata>,
   openai: OpenAI,
   tweets: TwitterAPITweet[],
-  topK: number = 50
+  topK: number = 50,
 ): Promise<{ pineconeMatches: PineconeMarketHit[]; queryText: string }> {
   const queryText = await buildThreadQuery(openai, tweets);
   console.log(queryText);
@@ -482,7 +479,7 @@ export async function searchMarketsFromThread(
         },
       }),
     { maxRetries: 2, initialDelay: 1000 },
-    "Pinecone search"
+    "Pinecone search",
   );
 
   return {
@@ -516,7 +513,7 @@ export function deduplicateByEvent(
   // For each event, keep top N by liquidity
   const results: EnrichedPineconeMarketHit[] = [];
 
-  for (const [eventKey, eventMarkets] of eventGroups.entries()) {
+  for (const eventMarkets of eventGroups.values()) {
     // Sort by liquidity (descending)
     const sorted = eventMarkets.sort(
       (a, b) => (b.metadata.liquidity || 0) - (a.metadata.liquidity || 0),

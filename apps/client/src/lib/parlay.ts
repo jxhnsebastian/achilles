@@ -24,8 +24,7 @@ import {
   searchMarketsFromThread,
   withRetry,
 } from "./parlay-utils";
-import { Index, Pinecone, RecordMetadata } from "@pinecone-database/pinecone";
-import { string } from "zod";
+import { Pinecone } from "@pinecone-database/pinecone";
 
 export async function stage1MarketFilter(
   openai: OpenAI,
@@ -146,8 +145,8 @@ export async function stage1MarketFilter(
 
   // Validation: Check for duplicate event titles
   if (parsed?.selectedMarketIds) {
-    parsed.selectedMarketIds = parsed.selectedMarketIds.map(String)
-    console.log("sasi", parsed.selectedMarketIds)
+    parsed.selectedMarketIds = parsed.selectedMarketIds.map(String);
+    console.log("sasi", parsed.selectedMarketIds);
     const selectedMarkets = markets.filter((m) => parsed.selectedMarketIds.includes(m.id));
 
     const eventTitles = selectedMarkets.map((m) => m.events[0]?.title);
@@ -644,7 +643,10 @@ export async function analyzeTweetThread(
     console.log(`Found ${pineconeMatches.length} relevant markets from Pinecone`);
 
     const enrichedMatches = await fetchMarketObjects(pineconeMatches);
-    const marketsWithData = deduplicateByEvent(enrichedMatches.filter((m) => m.fullMarketData !== null),2);
+    const marketsWithData = deduplicateByEvent(
+      enrichedMatches.filter((m) => m.fullMarketData !== null),
+      2,
+    );
     console.log(
       `Enriched ${marketsWithData.length}/${enrichedMatches.length} markets with full data`,
     );
@@ -750,8 +752,8 @@ export async function generateParlays(
       candidateMarkets,
     );
 
-    console.log(candidateMarkets.map(m => m.id))
-    console.log(stage1Result.selectedMarketIds)
+    console.log(candidateMarkets.map((m) => m.id));
+    console.log(stage1Result.selectedMarketIds);
 
     // Get the 20 selected markets
     const selectedMarkets = candidateMarkets.filter((m) =>
