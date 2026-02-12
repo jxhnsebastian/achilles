@@ -12,7 +12,7 @@ import {
   Raydium as RaydiumSDK,
 } from "@raydium-io/raydium-sdk-v2";
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
-import { QueryChain } from "@firefly-exchange/library-sui/dist/src/spot";
+// import { QueryChain } from "@firefly-exchange/library-sui/dist/src/spot";
 import { initCetusSDK } from "@cetusprotocol/cetus-sui-clmm-sdk";
 
 export const getRpc = (rpcUrl: string) => {
@@ -90,24 +90,24 @@ export async function getBluefinPoolInfo(poolAddress: string) {
   const client = new SuiClient({
     url: getFullnodeUrl("mainnet"),
   });
+  throw new Error("Failed to get pool config.");
+  // const qc = new QueryChain(client);
 
-  const qc = new QueryChain(client);
+  // const pool = await qc.getPool(poolAddress);
+  // if (!pool) throw new Error("Failed to get pool config.");
 
-  const pool = await qc.getPool(poolAddress);
-  if (!pool) throw new Error("Failed to get pool config.");
-
-  return {
-    address: pool.id,
-    tickSpacing: pool.ticks_manager.tick_spacing,
-    coinA: {
-      address: pool.coin_a.address,
-      decimals: pool.coin_a.decimals,
-    },
-    coinB: {
-      address: pool.coin_b.address,
-      decimals: pool.coin_b.decimals,
-    },
-  };
+  // return {
+  //   address: pool.id,
+  //   tickSpacing: pool.ticks_manager.tick_spacing,
+  //   coinA: {
+  //     address: pool.coin_a.address,
+  //     decimals: pool.coin_a.decimals,
+  //   },
+  //   coinB: {
+  //     address: pool.coin_b.address,
+  //     decimals: pool.coin_b.decimals,
+  //   },
+  // };
 }
 
 export async function getCetusPoolInfo(poolAddress: string) {
