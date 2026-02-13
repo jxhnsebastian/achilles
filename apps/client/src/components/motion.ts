@@ -1,4 +1,6 @@
-export const cardDropIn = {
+import { Variants } from "framer-motion";
+
+export const cardDropIn: Variants = {
   hidden: {
     opacity: 0,
     y: 16,
@@ -13,7 +15,7 @@ export const cardDropIn = {
   },
 };
 
-export const listContainer = {
+export const listContainer: Variants = {
   hidden: { opacity: 0 },
   visible: {
     opacity: 1,
@@ -24,7 +26,7 @@ export const listContainer = {
   },
 };
 
-export const listItem = {
+export const listItem: Variants = {
   hidden: {
     opacity: 0,
     y: 8,

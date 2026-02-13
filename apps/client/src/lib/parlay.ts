@@ -491,6 +491,7 @@ export async function stage3ParlayValidator(
   - Temporal coherence: Do time windows align?
   - Narrative strength: Does this tell a coherent story?
   - If weak but valid → APPROVE with note
+  - You have to approve or reject all the input parlays and return them as approved or rejected.
   
   OUTPUT FORMAT (strict JSON only):
   {

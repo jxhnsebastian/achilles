@@ -66,11 +66,9 @@ export default function ParlayAnalyzerPage() {
         setPhase("markets_ready");
       }
 
-      if (data.approvedParlays?.length) {
-        setParlays(data.approvedParlays);
-        if (data.rejectedParlays?.length) {
-          setRejectedParlays(data.rejectedParlays);
-        }
+      if (data.approvedParlays?.length || data.rejectedParlays?.length) {
+        setParlays(data?.approvedParlays || []);
+        setRejectedParlays(data?.rejectedParlays || []);
         setPhase("results_ready");
         clearInterval(interval);
       }
@@ -154,33 +152,38 @@ export default function ParlayAnalyzerPage() {
                 </CardDescription>
               </div>
             )}
-            <motion.div
-              variants={listContainer}
-              initial="hidden"
-              animate="visible"
-              className="w-full px-6 flex flex-col items-start gap-3 max-h-[15rem] overflow-y-auto"
-            >
-              {marketList.map((m) => (
+            
+            {marketList.length > 0 && (
+              <CardContent>
                 <motion.div
-                  key={m.id}
-                  variants={listItem}
-                  className="rounded-md border border-l-0 gap-2 pr-2 flex items-center"
+                  variants={listContainer}
+                  initial="hidden"
+                  animate="visible"
+                  className="w-full flex flex-col items-start gap-3 max-h-[15rem] overflow-y-auto"
                 >
-                  {m.icon ? (
-                    <Image
-                      className="rounded-full size-8"
-                      src={m.icon}
-                      alt=""
-                      width={24}
-                      height={24}
-                    />
-                  ) : (
-                    <span className="text-xs text-muted-foreground">PM</span>
-                  )}
-                  <span className="text-xs text-muted-foreground">{m.question}</span>
+                  {marketList.map((m) => (
+                    <motion.div
+                      key={m.id}
+                      variants={listItem}
+                      className="rounded-md border border-l-0 gap-2 pr-2 flex items-center"
+                    >
+                      {m.icon ? (
+                        <Image
+                          className="rounded-full size-8"
+                          src={m.icon}
+                          alt=""
+                          width={24}
+                          height={24}
+                        />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">PM</span>
+                      )}
+                      <span className="text-xs text-muted-foreground">{m.question}</span>
+                    </motion.div>
+                  ))}
                 </motion.div>
-              ))}
-            </motion.div>
+              </CardContent>
+            )}
           </Card>
         </motion.div>
       )}

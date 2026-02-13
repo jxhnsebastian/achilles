@@ -473,9 +473,11 @@ export async function searchMarketsFromThread(
         includeMetadata: true,
         filter: {
           status: { $eq: "active" },
+          platform: { $eq: "polymarket" },
           resolution_time: { $gt: nowUnix },
           liquidity: { $gt: 0 },
           volume: { $gt: 0 },
+          is_mve: { $eq: false },
         },
       }),
     { maxRetries: 2, initialDelay: 1000 },
