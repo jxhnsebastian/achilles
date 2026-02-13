@@ -87,9 +87,9 @@ export async function getRaydiumPoolInfo(poolAddress: string) {
 }
 
 export async function getBluefinPoolInfo(poolAddress: string) {
-  const client = new SuiClient({
-    url: getFullnodeUrl("mainnet"),
-  });
+  // const client = new SuiClient({
+  //   url: getFullnodeUrl("mainnet"),
+  // });
   throw new Error("Failed to get pool config.");
   // const qc = new QueryChain(client);
 
