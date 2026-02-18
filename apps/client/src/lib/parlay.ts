@@ -12,6 +12,7 @@ import {
   Stage2Output,
   Stage3Output,
   TweetThread,
+  TwitterAPITweet,
 } from "./parlay-types";
 import {
   deduplicateByEvent,
@@ -44,7 +45,7 @@ export async function stage1MarketFilter(
     eventGroups.get(eventTitle)!.push(m);
   });
 
-  const prompt = `You are selecting 20 markets for YES-betting parlays.
+  const prompt = `You are selecting 20 markets for YES-betting parlays for the given parlay topic.
   
   CRITICAL CONSTRAINT: We will bet YES on every market in our parlays, so we MUST select markets from DIFFERENT events.
   
@@ -58,12 +59,9 @@ export async function stage1MarketFilter(
   └─ Market 3: "Will Chris Shula be the next Cardinals coach?"
   
   These markets share the SAME event title and are MUTUALLY EXCLUSIVE - only ONE can resolve to YES.
-  Since we're betting YES on all parlay legs, we can NEVER combine markets from the same event.
+  Since we're betting YES on all parlay legs, we can NEVER combine markets from the same event
   
-  THREAD CONTEXT:
-  Author: ${thread.author} (@${thread.authorHandle})
-  
-  THREAD TEXT:
+  PARLAY TOPIC:
   ${thread.text}
   
   AVAILABLE EVENT GROUPS:
@@ -592,10 +590,8 @@ export async function stage3ParlayValidator(
   };
 }
 
-export async function analyzeTweetThread(
-  config: AnalyzeThreadConfig,
-): Promise<AnalyzeThreadResult> {
-  const { requestId, tweetId, topK = 50 } = config;
+export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<AnalyzeThreadResult> {
+  const { requestId, query, tweet, topK = 50 } = config;
 
   const twitterApiKey = process.env.TWITTER_API_KEY!;
   const openaiApiKey = process.env.OPENAI_API_KEY!;
@@ -629,14 +625,19 @@ export async function analyzeTweetThread(
 
     const pineconeIndex = pinecone.index(pineconeIndexName);
 
-    const tweets = await fetchTweetThread(tweetId, twitterApiKey);
+    let tweets: TwitterAPITweet[] = [];
+    let author: any = null;
 
-    // Extract metadata
-    const author = tweets[0].author;
+    if (tweet) {
+      tweets = await fetchTweetThread(query, twitterApiKey);
+      author = tweets[0].author;
+    }
 
     const { pineconeMatches, queryText } = await searchMarketsFromThread(
       pineconeIndex,
       openai,
+      query,
+      tweet,
       tweets,
       topK,
     );
@@ -658,8 +659,8 @@ export async function analyzeTweetThread(
 
     return {
       threadContext: {
-        author: author.name,
-        authorHandle: author.userName,
+        author: author?.name ?? "",
+        authorHandle: author?.userName ?? "",
         tweetCount: tweets.length,
         text: queryText,
       },
@@ -670,7 +671,7 @@ export async function analyzeTweetThread(
           : `Found ${marketsWithData.length} relevant markets`,
     };
   } catch (error: any) {
-    console.error("Fatal error in analyzeTweetThread:", error);
+    console.error("Fatal error in analyzeQuery:", error);
 
     return {
       threadContext: {
@@ -689,12 +690,12 @@ export async function analyzeTweetThread(
 export async function generateParlays(
   config: GenerateParlaysConfig,
 ): Promise<GenerateParlaysResult> {
-  const { requestId, tweetId } = config;
+  const { requestId, query, tweet } = config;
 
   console.log(`\n${"=".repeat(80)}`);
   console.log(`🎯 Starting Parlay Generation Pipeline`);
   console.log(`Request ID: ${requestId}`);
-  console.log(`Tweet ID: ${tweetId}`);
+  console.log(`Query: ${query}`);
   console.log(`${"=".repeat(80)}\n`);
 
   try {
@@ -711,9 +712,10 @@ export async function generateParlays(
 
     // Step 0: Fetch initial markets using existing function
     console.log("📥 Fetching tweet thread and initial markets...");
-    const initialResult = await analyzeTweetThread({
+    const initialResult = await analyzeQuery({
       requestId,
-      tweetId,
+      query,
+      tweet,
       topK: 50,
     });
 

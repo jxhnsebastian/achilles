@@ -71,7 +71,8 @@ export interface CandidateMarket {
 
 export interface AnalyzeThreadConfig {
   requestId: string;
-  tweetId: string;
+  query: string;
+  tweet: boolean
   topK?: number;
 }
 
@@ -145,7 +146,8 @@ export interface EnrichedPineconeMarketHit extends PineconeMarketHit {
 
 export interface GenerateParlaysConfig {
   requestId: string;
-  tweetId: string;
+  query: string;
+  tweet: boolean
 }
 
 export interface ApprovedParlay {

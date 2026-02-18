@@ -456,10 +456,12 @@ export async function embedQuery(openai: OpenAI, text: string): Promise<number[]
 export async function searchMarketsFromThread(
   pineconeIndex: Index<RecordMetadata>,
   openai: OpenAI,
+  query: string,
+  tweet: boolean,
   tweets: TwitterAPITweet[],
   topK: number = 50,
 ): Promise<{ pineconeMatches: PineconeMarketHit[]; queryText: string }> {
-  const queryText = await buildThreadQuery(openai, tweets);
+  const queryText = tweet && tweets.length > 0 ? await buildThreadQuery(openai, tweets) : query;
   console.log(queryText);
   const embedding = await embedQuery(openai, queryText);
 
