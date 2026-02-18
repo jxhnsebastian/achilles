@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "crypto";
 
-const EC2_SERVER_URL = process.env.EC2_SERVER_URL!;
+const PARLAY_SERVER_URL = process.env.PARLAY_SERVER_URL!;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -9,16 +9,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: "Method not allowed" });
   }
 
-  const { query, tweet, marketIds } = req.body;
+  const { query, tweet } = req.body;
 
   if (!query) {
     return res.status(400).json({ error: "Invalid query" });
   }
-
+  console.log(PARLAY_SERVER_URL, INTERNAL_SECRET, query, tweet);
   const requestId = randomUUID();
 
   try {
-    const ecRes = await fetch(`${EC2_SERVER_URL}/enqueue`, {
+    const ecRes = await fetch(`${PARLAY_SERVER_URL}/enqueue`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

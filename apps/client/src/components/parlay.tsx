@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Loader2 } from "lucide-react";
+import { Loader2, Twitter } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,8 @@ import {
 import { motion } from "framer-motion";
 import { cardDropIn, listContainer, listItem } from "./motion";
 import { Loader } from "lucide-react";
+import { Checkbox } from "./ui/checkbox";
+import { Label } from "./ui/label";
 
 type Phase = "idle" | "starting" | "polling" | "markets_ready" | "results_ready" | "error";
 
@@ -25,6 +27,7 @@ export default function ParlayAnalyzerPage() {
   const [tweetId, setTweetId] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
+  const [isTweet, setIsTweet] = useState(true);
 
   const [marketIds, setMarketIds] = useState<string[]>([]);
   const [markets, setMarkets] = useState<Record<string, PolymarketMarket>>({});
@@ -45,7 +48,7 @@ export default function ParlayAnalyzerPage() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ tweetId }),
+      body: JSON.stringify({ query: tweetId, tweet: isTweet }),
     });
 
     const data = await res.json();
@@ -117,6 +120,19 @@ export default function ParlayAnalyzerPage() {
             onChange={(e) => setTweetId(e.target.value)}
             placeholder="Enter Tweet ID"
           />
+          <div className="flex items-center gap-2 px-3 py-2 border rounded-md">
+            <Twitter className="h-4 w-4 text-muted-foreground" />
+
+            <Checkbox
+              id="tweet-mode"
+              checked={isTweet}
+              onCheckedChange={(checked) => setIsTweet(!!checked)}
+            />
+
+            <Label htmlFor="tweet-mode" className="text-xs text-muted-foreground cursor-pointer">
+              Tweet
+            </Label>
+          </div>
           <Button disabled={!tweetId}>
             {(phase === "starting" || phase === "polling" || phase === "markets_ready") && (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -152,7 +168,7 @@ export default function ParlayAnalyzerPage() {
                 </CardDescription>
               </div>
             )}
-            
+
             {marketList.length > 0 && (
               <CardContent>
                 <motion.div

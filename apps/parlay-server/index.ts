@@ -3,7 +3,7 @@ import Bull from "bull";
 import { getDbPool, withRetry } from "./utils";
 import { generateParlays } from "./parlay";
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 5000;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
 const REDIS_URL = process.env.REDIS_URL!;
 const CONCURRENCY = Number(process.env.CONCURRENCY || 2);
@@ -14,7 +14,14 @@ interface ParlayJob {
   tweet: boolean;
 }
 
-const parlayQueue = new Bull<ParlayJob>("parlay-generation", REDIS_URL, {
+const parlayQueue = new Bull<ParlayJob>("parlay-generation", {
+  redis: {
+    host: "still-mackerel-17195.upstash.io",
+    port: 6379,
+    password: "AUMrAAIncDFlYTdlZGI2MjRiN2E0M2FjYmU0ODg2NGQzMDk3ZjhhMXAxMTcxOTU",
+    username: "default",
+    tls: {},
+  },
   defaultJobOptions: {
     attempts: 3,
     backoff: { type: "exponential", delay: 2000 },
@@ -34,7 +41,7 @@ async function updateRequestStatus(requestId: string, status: "pending" | "compl
           `UPDATE requests
            SET status = $1,
                updated_at = CURRENT_TIMESTAMP
-           WHERE request_id = $3`,
+           WHERE request_id = $2`,
           [status, requestId],
         );
         console.log(`[${requestId}] Status updated to ${status}`);
@@ -125,4 +132,5 @@ app.get("/job/:jobId", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`EC2 parlay server running on port ${PORT}`);
   console.log(`Concurrency: ${CONCURRENCY}`);
+  console.log(INTERNAL_SECRET, REDIS_URL);
 });
