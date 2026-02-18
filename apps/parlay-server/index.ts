@@ -1,7 +1,7 @@
 import express from "express";
 import Bull from "bull";
-import { getDbPool, withRetry } from "apps/client/src/lib/parlay-utils";
-import { generateParlays } from "apps/client/src/lib/parlay";
+import { getDbPool, withRetry } from "./utils";
+import { generateParlays } from "./parlay";
 
 const PORT = process.env.PORT || 3001;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
