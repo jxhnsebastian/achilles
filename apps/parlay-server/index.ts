@@ -2,6 +2,7 @@ import express from "express";
 import Bull from "bull";
 import { getDbPool, withRetry } from "./utils";
 import { generateParlays } from "./parlay";
+import { getParlayPricing, PricingLegInput } from "./polymarketPricing";
 
 const PORT = process.env.PORT || 5000;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
@@ -116,6 +117,22 @@ app.post("/enqueue", async (req, res) => {
   } catch (err) {
     console.error("Enqueue error:", err);
     return res.status(500).json({ error: "Failed to enqueue job" });
+  }
+});
+
+app.post("/pricing", async (req, res) => {
+  const { legs }: { legs?: PricingLegInput[] } = req.body;
+
+  if (!Array.isArray(legs) || !legs.length) {
+    return res.status(400).json({ error: "legs are required" });
+  }
+
+  try {
+    const pricing = await getParlayPricing(legs);
+    return res.status(200).json(pricing);
+  } catch (error) {
+    console.error("Pricing error:", error);
+    return res.status(500).json({ error: "Failed to fetch parlay pricing" });
   }
 });
 
