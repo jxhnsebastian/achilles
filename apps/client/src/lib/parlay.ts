@@ -590,6 +590,136 @@ export async function stage3ParlayValidator(
   };
 }
 
+async function filterMarketsByThesis(
+  openai: OpenAI,
+  thesis: string,
+  markets: EnrichedPineconeMarketHit[],
+): Promise<EnrichedPineconeMarketHit[]> {
+  console.log(`\n=== THESIS FILTER: Scoring ${markets.length} markets for relevance ===`);
+
+  const marketList = markets
+    .map((m, i) => {
+      const q = m.fullMarketData?.question ?? m.metadata.title ?? "Unknown";
+      const event = m.fullMarketData?.events?.[0]?.title ?? "";
+      return `${i + 1}. ID: ${m.market_id} | Question: ${q}${event ? ` | Event: ${event}` : ""}`;
+    })
+    .join("\n");
+
+  const prompt = `You are a prediction market relevance filter. Your job is to score how relevant each market is to the user's betting thesis, balancing precision and recall — include all genuinely useful markets, not just exact matches.
+
+THESIS:
+"${thesis}"
+
+AVAILABLE MARKETS:
+${marketList}
+
+TASK:
+For a multi-part thesis (e.g. "Arsenal will win the PL AND Bayern will win the UCL"), cover EACH leg — select relevant markets for every team/competition mentioned.
+
+RELEVANCE PRIORITY (in order, but not too strict):
+1) exact — same team + same competition + same outcome type
+2) near_exact — same team + same competition + closely related outcome
+3) same_comp_related — same team + same competition + related outcome (e.g. top 4, trophy, winner)
+4) season_proxy — same team + season-level outcome (top 4 finish, trophy, relegation inverse, title winner)
+5) player_proxy — player award/scoring market clearly tied to a thesis team's season success
+6) match_proxy — single match win/draw market for a thesis team (include if relevant and no redundancy)
+7) competition_context — competition-level market (e.g. UCL winner, PL winner) that directly supports/contrasts thesis
+
+EXCLUDE OR HEAVILY PENALIZE:
+- Unrelated teams or competitions not mentioned in the thesis
+- Markets sharing only the same sport with no connection to thesis teams/competitions
+- Very weak player props (e.g. individual stat lines unconnected to team success)
+- Near-duplicate markets — keep only the strongest version per outcome
+- Random spreads/totals/BTTS for teams not in the thesis
+
+MULTI-PART THESIS BEHAVIOR:
+- If thesis mentions multiple teams, include relevant markets for EACH team
+- Aim to cover all thesis legs with at least some markets
+- If no exact match exists for a leg, include best proxies and note it
+
+SCORING GUIDANCE:
+- 0.95–1.00 = exact match (same team, same competition, same outcome)
+- 0.88–0.94 = near-exact / same competition strong relation
+- 0.78–0.87 = strong same-team proxy (season-level, trophy, top 4)
+- 0.65–0.77 = useful related market (include if it keeps list quality high)
+- Below 0.65 = exclude
+
+Include markets scoring >= 0.65. Return more markets if they are genuinely relevant.
+
+RETURN valid JSON only, no markdown:
+{
+  "thesis": "${thesis}",
+  "exact_match_found": true | false,
+  "notes": "<brief note if exact markets are missing for any leg>",
+  "selected_markets": [
+    {
+      "id": "<market id from list>",
+      "question": "<market question>",
+      "relevance_type": "exact | near_exact | same_comp_related | season_proxy | player_proxy | match_proxy | competition_context",
+      "correlation_direction": "positive | negative | unclear",
+      "short_reason": "<one concise line>",
+      "score": 0.0
+    }
+  ]
+}`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a precise prediction market relevance filter. Return only valid JSON with no markdown or extra text.",
+      },
+      { role: "user", content: prompt },
+    ],
+    temperature: 0,
+  });
+
+  const raw = response.choices[0]?.message?.content ?? "";
+  const parsed = safeJSON<{
+    thesis: string;
+    exact_match_found: boolean;
+    selected_markets: Array<{
+      id: string;
+      question: string;
+      relevance_type: string;
+      correlation_direction: string;
+      short_reason: string;
+      score: number;
+    }>;
+  }>(raw);
+
+  if (!parsed || !parsed.selected_markets) {
+    console.warn("Thesis filter: failed to parse response, returning all markets");
+    return markets;
+  }
+
+  console.log(`Thesis filter: exact_match_found=${parsed.exact_match_found}`);
+  if ((parsed as any).notes) console.log(`Thesis filter notes: ${(parsed as any).notes}`);
+  console.log(`Thesis filter: ${parsed.selected_markets.length} markets passed (score >= 0.65)`);
+
+  // Build a lookup by market_id
+  const marketById = new Map(markets.map((m) => [m.market_id, m]));
+
+  const filtered: EnrichedPineconeMarketHit[] = [];
+  for (const sel of parsed.selected_markets) {
+    const match = marketById.get(sel.id);
+    if (match) {
+      console.log(
+        `  [${sel.relevance_type} | ${sel.score.toFixed(2)} | ${sel.correlation_direction}] ${sel.question} — ${sel.short_reason}`,
+      );
+      filtered.push({ ...match, score: sel.score });
+    }
+  }
+
+  // Sort by score descending
+  filtered.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+
+  console.log(`✓ Thesis filter complete: ${filtered.length} markets kept\n`);
+  return filtered;
+}
+
 export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<AnalyzeThreadResult> {
   const { requestId, query, tweet, topK = 50 } = config;
 
@@ -653,7 +783,10 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
       `Enriched ${marketsWithData.length}/${enrichedMatches.length} markets with full data`,
     );
 
-    const marketIds = marketsWithData.map((m) => `${m.platform}:${m.market_id}`);
+    // LLM-based thesis relevance filter
+    const filteredMarkets = await filterMarketsByThesis(openai, queryText, marketsWithData);
+
+    const marketIds = filteredMarkets.map((m) => `${m.platform}:${m.market_id}`);
 
     await saveRequestMarkets(requestId, marketIds);
 
@@ -664,11 +797,11 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
         tweetCount: tweets.length,
         text: queryText,
       },
-      markets: marketsWithData,
+      markets: filteredMarkets,
       message:
         pineconeMatches.length === 0
           ? "No relevant markets found"
-          : `Found ${marketsWithData.length} relevant markets`,
+          : `Found ${filteredMarkets.length} relevant markets (filtered from ${marketsWithData.length})`,
     };
   } catch (error: any) {
     console.error("Fatal error in analyzeQuery:", error);

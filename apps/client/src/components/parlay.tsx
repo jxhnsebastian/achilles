@@ -15,6 +15,10 @@ import {
   RejectedParlay,
   RequestStatusResponse,
 } from "@/lib/parlay-types";
+import {
+  ParlayPricingResponse,
+  PricingLegInput,
+} from "@/lib/polymarketPricing";
 import { motion } from "framer-motion";
 import { cardDropIn, listContainer, listItem } from "./motion";
 import { Loader } from "lucide-react";
@@ -282,6 +286,13 @@ function ParlayCard({
   markets: Record<string, PolymarketMarket>;
 }) {
   const isApproved = parlay.verdict === "approved";
+  const { pricing, loading, error } = useParlayPricing(parlay, markets);
+
+  const legByMarketId = useMemo(() => {
+    const map = new Map<string, NonNullable<ParlayPricingResponse["legs"][number]>>();
+    pricing?.legs.forEach((leg) => map.set(leg.marketId, leg));
+    return map;
+  }, [pricing]);
 
   return (
     <Card className={isApproved ? "border-border" : "border-dashed bg-muted/30 opacity-80"}>
@@ -306,15 +317,159 @@ function ParlayCard({
           {parlay.marketIds.map((id) => {
             const market = markets[id];
             if (!market) return null;
+            const legPricing = legByMarketId.get(id);
 
             return (
-              <li key={id} className="leading-snug">
-                • {market.question}
+              <li key={id} className="leading-snug rounded-md border p-2">
+                <div>• {market.question}</div>
+                <div className="mt-1 text-xs text-muted-foreground flex flex-wrap gap-3">
+                  <span>Side: YES</span>
+                  <span>
+                    Implied Prob: {formatPercent(legPricing?.impliedProbability)}
+                  </span>
+                  <span>Decimal: {formatDecimalOdds(legPricing?.decimalOdds)}</span>
+                  <span>American: {formatAmericanOdds(legPricing?.americanOdds)}</span>
+                </div>
+                {legPricing?.error && (
+                  <div className="mt-1 text-xs text-amber-500">{legPricing.error}</div>
+                )}
               </li>
             );
           })}
         </ul>
+
+        <Separator />
+
+        <div className="rounded-md border p-3 bg-muted/30 space-y-1">
+          <div className="text-xs font-medium">Combined Parlay Odds (Estimated)</div>
+
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Fetching live Polymarket prices...
+            </div>
+          )}
+
+          {!loading && error && <div className="text-xs text-red-500">{error}</div>}
+
+          {!loading && !error && pricing && (
+            <>
+              {pricing.combined ? (
+                <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
+                  <span>
+                    Probability: {formatPercent(pricing.combined.combinedProbability)}
+                  </span>
+                  <span>Decimal: {formatDecimalOdds(pricing.combined.combinedDecimalOdds)}</span>
+                  <span>
+                    American: {formatAmericanOdds(pricing.combined.combinedAmericanOdds)}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-amber-500">
+                  Unable to compute combined odds: no valid priced legs available.
+                </div>
+              )}
+
+              {pricing.hasStaleData && (
+                <div className="text-xs text-amber-500">
+                  Some price data may be stale (older than 15 minutes).
+                </div>
+              )}
+
+              <div className="text-[11px] text-muted-foreground">{pricing.note}</div>
+              <div className="text-[11px] text-muted-foreground">
+                Last updated: {pricing.lastUpdated ? new Date(pricing.lastUpdated).toLocaleString() : "N/A"}
+              </div>
+            </>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
+}
+
+function useParlayPricing(
+  parlay: ApprovedParlay | RejectedParlay,
+  markets: Record<string, PolymarketMarket>,
+) {
+  const [pricing, setPricing] = useState<ParlayPricingResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const legs = useMemo<PricingLegInput[]>(() => {
+    const resolvedLegs: PricingLegInput[] = [];
+
+    parlay.marketIds.forEach((marketId) => {
+      const market = markets[marketId];
+      if (!market) return;
+
+      resolvedLegs.push({
+        marketId,
+        question: market.question,
+        // Current backend parlay generation bets YES on all legs.
+        selectedSide: "YES",
+        market,
+      });
+    });
+
+    return resolvedLegs;
+  }, [parlay.marketIds, markets]);
+
+  useEffect(() => {
+    if (!legs.length) {
+      setPricing(null);
+      setError(null);
+      return;
+    }
+
+    let active = true;
+    setLoading(true);
+    setError(null);
+
+    fetch("/api/parlay/pricing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ legs }),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body?.error || "Failed to fetch pricing");
+        }
+        return res.json();
+      })
+      .then((data: ParlayPricingResponse) => {
+        if (!active) return;
+        setPricing(data);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setError(err instanceof Error ? err.message : "Failed to fetch pricing");
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [legs]);
+
+  return { pricing, loading, error };
+}
+
+function formatPercent(probability?: number | null) {
+  if (probability === null || probability === undefined || Number.isNaN(probability)) return "N/A";
+  return `${(probability * 100).toFixed(1)}%`;
+}
+
+function formatDecimalOdds(odds?: number | null) {
+  if (odds === null || odds === undefined || Number.isNaN(odds)) return "N/A";
+  return odds.toFixed(2);
+}
+
+function formatAmericanOdds(odds?: number | null) {
+  if (odds === null || odds === undefined || Number.isNaN(odds)) return "N/A";
+  return odds > 0 ? `+${Math.round(odds)}` : `${Math.round(odds)}`;
 }
