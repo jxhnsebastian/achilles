@@ -17,6 +17,7 @@ import {
 } from "./types";
 import {
   deduplicateByEvent,
+  fetchForcedFallbackMarkets,
   fetchMarketObjects,
   fetchTweetThread,
   normalizeMarket,
@@ -27,6 +28,22 @@ import {
   withRetry,
 } from "./utils";
 import { Pinecone } from "@pinecone-database/pinecone";
+
+/**
+ * Reformulate an assertion-style sub-query into a market question format.
+ * "Arsenal will win the Premier League" → "Will Arsenal win the Premier League?"
+ * This improves cosine similarity against Polymarket titles in Pinecone.
+ */
+function reformulateAsQuestion(subQuery: string): string {
+  // Pattern: "<Subject> will <predicate>"
+  const m = subQuery.match(/^(.+?)\s+will\s+(.+)$/i);
+  if (m) {
+    const subject = m[1].trim();
+    const predicate = m[2].trim().replace(/\?$/, "");
+    return `Will ${subject} ${predicate}?`;
+  }
+  return subQuery;
+}
 
 export async function stage1MarketFilter(
   openai: OpenAI,
@@ -190,9 +207,14 @@ export async function stage2ParlayGenerator(
   openai: OpenAI,
   thread: TweetThread,
   markets: NormalizedMarket[],
+  subQueryGroups?: Map<string, number>,
 ): Promise<Stage2Output> {
   console.log("\n=== STAGE 2: Parlay Generator ===");
   console.log(`Generating parlays from ${markets.length} markets`);
+  if (subQueryGroups && subQueryGroups.size > 0) {
+    const numGroups = new Set(subQueryGroups.values()).size;
+    console.log(`Sub-query groups detected: ${numGroups} groups`);
+  }
 
   // Pre-group markets by event
   const eventGroups = new Map<string, NormalizedMarket[]>();
@@ -235,7 +257,16 @@ export async function stage2ParlayGenerator(
   ✅ ALWAYS combine markets from DIFFERENT events
      Example: "SGA wins MVP (YES)" + "Ant-man wins scoring title (YES)"
      → All 4 outcomes possible
+  ${subQueryGroups && subQueryGroups.size > 0 ? `
+  SUB-QUERY GROUPS:
+  The query contains multiple distinct claims. Each market below is tagged [Group N].
   
+  MANDATORY CROSS-GROUP RULE:
+  ❌ NEVER put two legs from the SAME Group number in the same parlay
+  ✅ ALWAYS ensure each parlay leg comes from a DIFFERENT Group number
+  
+  This guarantees each parlay covers multiple independent claims.
+  ` : ""}
   THREAD CONTEXT:
   Author: ${thread.author} (@${thread.authorHandle})
   
@@ -255,17 +286,19 @@ export async function stage2ParlayGenerator(
   
   ALL MARKETS:
   ${markets
-    .map(
-      (m, i) => `
+    .map((m, i) => {
+      const group = subQueryGroups?.get(m.id);
+      const groupLabel = group !== undefined ? ` [Group ${group}]` : "";
+      return `
   Market ${i + 1}:
-  ID: ${m.id}
+  ID: ${m.id}${groupLabel}
   Question: ${m.question}
   Description: ${m.description}
   Event: ${m.events[0]?.title || "N/A"}
   Tags: ${m.tags.join(", ")}
   End Date: ${m.endDate}
-  `,
-    )
+  `;
+    })
     .join("\n---\n")}
   
   YOUR TASK:
@@ -362,6 +395,21 @@ export async function stage2ParlayGenerator(
         reason: p.reason,
       });
       return false;
+    }
+
+    // Cross-group constraint: no two legs from the same sub-query group
+    if (subQueryGroups && subQueryGroups.size > 0) {
+      const groups = p.marketIds.map((id) => subQueryGroups.get(id));
+      const definedGroups = groups.filter((g) => g !== undefined) as number[];
+      const uniqueGroups = new Set(definedGroups);
+      if (definedGroups.length >= 2 && uniqueGroups.size !== definedGroups.length) {
+        console.warn(`Stage 2: Rejected same-group parlay:`, {
+          marketIds: p.marketIds,
+          groups,
+          reason: p.reason,
+        });
+        return false;
+      }
     }
 
     return true;
@@ -703,14 +751,81 @@ RETURN valid JSON only, no markdown:
 
   const marketById = new Map(markets.map((m) => [m.market_id, m]));
 
+  // Extract keywords from thesis for deterministic boost
+  const thesisLower = thesis.toLowerCase();
+  const winnerKeywords = ["win", "winner", "outright", "champions"];
+  
+  // Extract team names (simple heuristic: capitalize words likely to be teams)
+  const teamPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+will\s+win/g;
+  const teamMatches = [...thesis.matchAll(teamPattern)].map((m) => m[1].toLowerCase());
+  
+  // Extract competition names (common patterns)
+  const competitions = [
+    "premier league",
+    "champions league",
+    "ucl",
+    "epl",
+    "la liga",
+    "serie a",
+    "bundesliga",
+    "world cup",
+    "euros",
+    "copa america",
+    "nba",
+    "nfl",
+    "mlb",
+    "nhl",
+  ];
+  const foundCompetitions = competitions.filter((comp) => thesisLower.includes(comp));
+
   const filtered: EnrichedPineconeMarketHit[] = [];
   for (const sel of parsed.selected_markets) {
     const match = marketById.get(sel.id);
     if (match) {
+      let adjustedScore = sel.score;
+      const questionLower = (match.fullMarketData?.question ?? "").toLowerCase();
+      const descriptionLower = (match.fullMarketData?.description ?? "").toLowerCase();
+      const combinedText = `${questionLower} ${descriptionLower}`;
+
+      // Check for exact intent: team + competition + winner
+      const hasTeam = teamMatches.some((team) => combinedText.includes(team));
+      const hasCompetition = foundCompetitions.some((comp) => combinedText.includes(comp));
+      const hasWinner = winnerKeywords.some((w) => combinedText.includes(w));
+
+      if (hasTeam && hasCompetition && hasWinner) {
+        // Strong boost: exact team + competition + winner match
+        adjustedScore = Math.min(1.0, adjustedScore * 1.35);
+      } else if (hasCompetition && !hasTeam && hasWinner) {
+        // Penalty: competition winner but wrong/no team
+        adjustedScore = adjustedScore * 0.65;
+      }
+
       console.log(
-        `  [${sel.relevance_type} | ${sel.score.toFixed(2)} | ${sel.correlation_direction}] ${sel.question} — ${sel.short_reason}`,
+        `  [${sel.relevance_type} | ${adjustedScore.toFixed(2)} | ${sel.correlation_direction}] ${sel.question} — ${sel.short_reason}`,
       );
-      filtered.push({ ...match, score: sel.score });
+      filtered.push({ ...match, score: adjustedScore });
+    }
+  }
+
+  // Force-include exact matches the LLM may have scored below threshold.
+  // Scan the full input pool (not just LLM-selected) for deterministic exact matches.
+  const filteredIds = new Set(filtered.map((m) => m.market_id));
+  for (const market of markets) {
+    if (filteredIds.has(market.market_id)) continue; // already included
+    if (!market.fullMarketData) continue;
+    const qLower = market.fullMarketData.question.toLowerCase();
+    const dLower = (market.fullMarketData.description || "").toLowerCase();
+    const combined = `${qLower} ${dLower}`;
+    const hasTeam = teamMatches.length > 0 && teamMatches.some((t) => combined.includes(t));
+    const hasCompetition = foundCompetitions.length > 0 && foundCompetitions.some((c) => combined.includes(c));
+    const hasWinner = winnerKeywords.some((w) => combined.includes(w));
+    if (hasTeam && hasCompetition && hasWinner) {
+      const forceScore = 0.88;
+      console.log(
+        `  [FORCE-INCLUDE | ${forceScore} | exact_match] ${market.fullMarketData.question} — deterministic exact match bypasses LLM threshold`,
+      );
+      filtered.push({ ...market, score: forceScore });
+      filteredIds.add(market.market_id);
     }
   }
 
@@ -763,6 +878,86 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
       author = tweets[0].author;
     }
 
+    // Sub-query splitting: split non-tweet plain-text queries on " and "
+    if (!tweet) {
+      const subQueries = query
+        .split(/ and /i)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (subQueries.length > 1) {
+        console.log(`\n=== SUB-QUERY SPLITTING: ${subQueries.length} sub-queries ===`);
+        subQueries.forEach((sq, i) => console.log(`  [${i}] ${sq}`));
+
+        const allGroupMarkets: EnrichedPineconeMarketHit[][] = [];
+
+        for (let gi = 0; gi < subQueries.length; gi++) {
+          const subQuery = subQueries[gi];
+          // Reformulate as question for better Pinecone cosine similarity
+          const embeddingQuery = reformulateAsQuestion(subQuery);
+          console.log(`\n--- Sub-query [${gi}]: "${subQuery}" ---`);
+          console.log(`    Embedding as: "${embeddingQuery}"`);
+
+          const { pineconeMatches: subMatches } = await searchMarketsFromThread(
+            pineconeIndex,
+            openai,
+            embeddingQuery,
+            false,
+            [],
+            topK,
+          );
+          const subEnriched = await fetchMarketObjects(subMatches);
+          const subDeduped = deduplicateByEvent(
+            subEnriched.filter((m) => m.fullMarketData !== null),
+            2,
+          );
+
+          // Hardcoded DB fallback: inject AFTER dedup so it can't be evicted by liquidity sorting
+          const subForced = await fetchForcedFallbackMarkets(subQuery);
+          const subDedupedIds = new Set(subDeduped.map((m) => `${m.platform}:${m.market_id}`));
+          for (const fm of subForced) {
+            if (!subDedupedIds.has(`${fm.platform}:${fm.market_id}`)) {
+              console.log(`[FORCED FALLBACK] Injecting into group [${gi}]: "${fm.fullMarketData?.question}"`);
+              subDeduped.unshift(fm);
+              subDedupedIds.add(`${fm.platform}:${fm.market_id}`);
+            }
+          }
+
+          const subFiltered = await filterMarketsByThesis(openai, subQuery, subDeduped);
+          subFiltered.forEach((m) => {
+            m.subQueryGroup = gi;
+          });
+          allGroupMarkets.push(subFiltered);
+        }
+
+        // Merge: take top results from each group, deduplicated by market_id
+        const maxPerGroup = Math.ceil(topK / subQueries.length);
+        const merged: EnrichedPineconeMarketHit[] = [];
+        const seenIds = new Set<string>();
+
+        for (const groupMarkets of allGroupMarkets) {
+          let count = 0;
+          for (const m of groupMarkets) {
+            if (!seenIds.has(m.market_id) && count < maxPerGroup) {
+              seenIds.add(m.market_id);
+              merged.push(m);
+              count++;
+            }
+          }
+        }
+
+        const mergedMarketIds = merged.map((m) => `${m.platform}:${m.market_id}`);
+        await saveRequestMarkets(requestId, mergedMarketIds);
+        console.log(
+          `✓ Sub-query merge: ${merged.length} markets across ${subQueries.length} groups`,
+        );
+        return {
+          threadContext: { author: "", authorHandle: "", tweetCount: 0, text: query },
+          markets: merged,
+          message: `Found ${merged.length} relevant markets across ${subQueries.length} sub-queries`,
+        };
+      }
+    }
+
     const { pineconeMatches, queryText } = await searchMarketsFromThread(
       pineconeIndex,
       openai,
@@ -782,6 +977,17 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
     console.log(
       `Enriched ${marketsWithData.length}/${enrichedMatches.length} markets with full data`,
     );
+
+    // Hardcoded DB fallback: inject AFTER dedup so it can't be evicted by liquidity sorting
+    const forcedMatches = await fetchForcedFallbackMarkets(queryText);
+    const marketsWithDataIds = new Set(marketsWithData.map((m) => `${m.platform}:${m.market_id}`));
+    for (const fm of forcedMatches) {
+      if (!marketsWithDataIds.has(`${fm.platform}:${fm.market_id}`)) {
+        console.log(`[FORCED FALLBACK] Injecting: "${fm.fullMarketData?.question}"`);
+        marketsWithData.unshift(fm);
+        marketsWithDataIds.add(`${fm.platform}:${fm.market_id}`);
+      }
+    }
 
     // LLM-based thesis relevance filter
     const filteredMarkets = await filterMarketsByThesis(openai, queryText, marketsWithData);
@@ -863,6 +1069,17 @@ export async function generateParlays(
       };
     }
 
+    // Build sub-query group map (market_id → group index), populated when sub-query splitting ran
+    const subQueryGroupMap = new Map<string, number>();
+    for (const m of initialResult.markets) {
+      if (m.subQueryGroup !== undefined) {
+        subQueryGroupMap.set(m.market_id, m.subQueryGroup);
+      }
+    }
+    if (subQueryGroupMap.size > 0) {
+      console.log(`Sub-query groups: ${new Set(subQueryGroupMap.values()).size} groups across ${subQueryGroupMap.size} markets`);
+    }
+
     console.log("Normalizing markets: ", initialResult.markets.length);
     const candidateMarkets: NormalizedMarket[] = initialResult.markets
       .map((m) => normalizeMarket(m.fullMarketData!))
@@ -913,6 +1130,7 @@ export async function generateParlays(
       openai,
       initialResult.threadContext,
       selectedMarkets,
+      subQueryGroupMap.size > 0 ? subQueryGroupMap : undefined,
     );
 
     if (stage2Result.parlays.length === 0) {

@@ -252,6 +252,98 @@ export async function fetchMarketObjects(
   }
 }
 
+/**
+ * Hardcoded fallback: searches the markets DB table using ILIKE patterns for
+ * specific entity pairs that may be missed by Pinecone embedding similarity.
+ * Detected entity pairs (hardcoded for now):
+ *   - Arsenal + Premier League
+ *   - Bayern + Champions League
+ */
+export async function fetchForcedFallbackMarkets(
+  query: string,
+): Promise<EnrichedPineconeMarketHit[]> {
+  const q = query.toLowerCase();
+
+  // Build per-entity SQL clauses with parameterised values
+  const clauses: string[] = [];
+  const params: any[] = ["polymarket"]; // $1
+  let pi = 2; // next param index
+
+  // Arsenal + Premier League
+  if (
+    q.includes("arsenal") &&
+    (q.includes("premier league") || q.includes("epl") || q.includes("english premier league"))
+  ) {
+    // question ILIKE '%Arsenal%' AND (ILIKE '%Premier League%' OR '%EPL%' OR '%English Premier League%') AND ILIKE '%win%'
+    clauses.push(
+      `(raw->>'question' ILIKE $${pi} AND ` +
+        `(raw->>'question' ILIKE $${pi + 1} OR raw->>'question' ILIKE $${pi + 2} OR raw->>'question' ILIKE $${pi + 3}) AND ` +
+        `raw->>'question' ILIKE $${pi + 4})`,
+    );
+    params.push("%Arsenal%", "%Premier League%", "%EPL%", "%English Premier League%", "%win%");
+    pi += 5;
+  }
+
+  // Bayern + Champions League
+  if (
+    q.includes("bayern") &&
+    (q.includes("champions league") || q.includes("ucl") || q.includes("uefa champions league"))
+  ) {
+    clauses.push(
+      `(raw->>'question' ILIKE $${pi} AND ` +
+        `(raw->>'question' ILIKE $${pi + 1} OR raw->>'question' ILIKE $${pi + 2} OR raw->>'question' ILIKE $${pi + 3}) AND ` +
+        `raw->>'question' ILIKE $${pi + 4})`,
+    );
+    params.push("%Bayern%", "%Champions League%", "%UCL%", "%UEFA Champions League%", "%win%");
+    pi += 5;
+  }
+
+  if (clauses.length === 0) return [];
+
+  const sql = `
+    SELECT platform, id, raw
+    FROM markets
+    WHERE platform = $1
+      AND (raw->>'active')::boolean = true
+      AND (raw->>'closed')::boolean = false
+      AND (${clauses.join(" OR ")})
+    LIMIT 20
+  `;
+
+  try {
+    const pool = getDbPool();
+    const client = await pool.connect();
+    try {
+      const result = await client.query(sql, params);
+      console.log(
+        `[FORCED FALLBACK] DB matched ${result.rows.length} market(s) for: "${query}"`,
+      );
+      return result.rows.map((row) => ({
+        market_id: String(row.id),
+        platform: row.platform as "polymarket" | "kalshi",
+        score: 0.99, // guaranteed top rank
+        metadata: {
+          market_id: String(row.id),
+          platform: row.platform,
+          title: (row.raw as PolymarketMarket)?.question || "",
+          resolution_time: null,
+          status: "active",
+          liquidity: null,
+          volume: null,
+          tags: null,
+        },
+        fullMarketData: row.raw as PolymarketMarket,
+      }));
+    } finally {
+      client.release();
+      await pool.end();
+    }
+  } catch (err) {
+    console.error("[FORCED FALLBACK] DB error:", err);
+    return [];
+  }
+}
+
 export function normalizeMarket(market: PolymarketMarket): NormalizedMarket {
   const tags = market?.tags?.map((tag) => tag.label) || [];
 

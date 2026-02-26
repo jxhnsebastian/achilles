@@ -142,6 +142,7 @@ export interface TwitterAPITweet {
   
   export interface EnrichedPineconeMarketHit extends PineconeMarketHit {
     fullMarketData?: PolymarketMarket | null;
+    subQueryGroup?: number;
   }
   
   export interface GenerateParlaysConfig {
