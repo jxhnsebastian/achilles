@@ -128,7 +128,6 @@ export default function ParlayAnalyzerPage() {
               checked={isTweet}
               onCheckedChange={(checked) => setIsTweet(!!checked)}
             />
-
             <Label htmlFor="tweet-mode" className="text-xs text-muted-foreground cursor-pointer">
               Tweet
             </Label>
