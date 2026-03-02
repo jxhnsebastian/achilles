@@ -151,10 +151,20 @@ export interface TwitterAPITweet {
     tweet: boolean
   }
   
+  export interface ParlayLeg {
+    marketId: string;
+    title: string;
+    yesPrice: number | null;
+    impliedProb: number | null;
+  }
+
   export interface ApprovedParlay {
     marketIds: string[];
     verdict: "approved";
     reason: string;
+    legs?: ParlayLeg[];
+    combinedProb?: number;
+    combinedDecimalOdds?: number;
   }
   
   export interface RejectedParlay {

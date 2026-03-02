@@ -41,6 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const parsed = row.result;
       response.approvedParlays = parsed.approvedParlays ?? [];
       response.rejectedParlays = parsed.rejectedParlays ?? [];
+      console.log(`✅ Returning status for ${requestId}: ${response.approvedParlays?.length || 0} approved, ${response.rejectedParlays?.length || 0} rejected`);
     }
 
     return res.status(200).json(response);

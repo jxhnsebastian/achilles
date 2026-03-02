@@ -8,6 +8,7 @@ import {
   GenerateParlaysResult,
   NormalizedMarket,
   ParlayCandidate,
+  ParlayLeg,
   RejectedParlay,
   Stage1Output,
   Stage2Output,
@@ -19,6 +20,7 @@ import {
   deduplicateByEvent,
   fetchForcedFallbackMarkets,
   fetchMarketObjects,
+  fetchPolymarketPrices,
   fetchTweetThread,
   normalizeMarket,
   safeJSON,
@@ -1151,19 +1153,89 @@ export async function generateParlays(
       stage2Result.parlays,
     );
 
+    // Enrich approved parlays with Polymarket prices
+    console.log("\n📊 Fetching Polymarket prices for approved parlays...");
+    let enrichedApproved = stage3Result.approvedParlays;
+    
+    try {
+      // Collect all unique market IDs from approved parlays, with their question text
+      // so fetchPolymarketPrices can search Gamma by question (IDs are internal, not Gamma numeric IDs)
+      const marketQuestionMap = new Map<string, string>();
+      for (const m of selectedMarkets) {
+        marketQuestionMap.set(m.id, m.question);
+      }
+
+      const allMarketEntries = Array.from(
+        new Set(stage3Result.approvedParlays.flatMap((p) => p.marketIds))
+      ).map((id) => ({ id, question: marketQuestionMap.get(id) || id }));
+
+      if (allMarketEntries.length > 0) {
+        const priceMap = await fetchPolymarketPrices(allMarketEntries);
+        
+        enrichedApproved = stage3Result.approvedParlays.map((parlay) => {
+          const legs: ParlayLeg[] = [];
+          let validLegs = true;
+          
+          for (const marketId of parlay.marketIds) {
+            const priceData = priceMap.get(marketId);
+            if (priceData) {
+              legs.push({
+                marketId,
+                title: priceData.title,
+                yesPrice: priceData.yesPrice,
+                impliedProb: priceData.yesPrice, // Polymarket price IS the probability
+              });
+            } else {
+              // Missing price - mark as N/A
+              legs.push({
+                marketId,
+                title: "Unknown",
+                yesPrice: null,
+                impliedProb: null,
+              });
+              validLegs = false;
+            }
+          }
+          
+          // Calculate combined odds if all legs have valid prices
+          let combinedProb: number | undefined;
+          let combinedDecimalOdds: number | undefined;
+          
+          if (validLegs && legs.every((leg) => leg.impliedProb !== null)) {
+            combinedProb = legs.reduce((acc, leg) => acc * (leg.impliedProb || 1), 1);
+            combinedDecimalOdds = combinedProb > 0 ? 1 / combinedProb : undefined;
+          }
+          
+          return {
+            ...parlay,
+            legs,
+            combinedProb,
+            combinedDecimalOdds,
+          };
+        });
+        
+        console.log(
+          `✓ Enriched ${enrichedApproved.length} parlays with Polymarket prices (${priceMap.size}/${allMarketEntries.length} markets found)`
+        );
+      }
+    } catch (err) {
+      console.error("Failed to enrich parlays with prices:", err);
+      // Continue with unenriched parlays
+    }
+    
     // Save results to database
-    await saveParlayResults(requestId, stage3Result.approvedParlays, stage3Result.rejectedParlays);
+    await saveParlayResults(requestId, enrichedApproved, stage3Result.rejectedParlays);
 
     console.log(`\n${"=".repeat(80)}`);
     console.log(`✅ Pipeline Complete`);
-    console.log(`Approved Parlays: ${stage3Result.approvedParlays.length}`);
+    console.log(`Approved Parlays: ${enrichedApproved.length}`);
     console.log(`Rejected Parlays: ${stage3Result.rejectedParlays.length}`);
     console.log(`${"=".repeat(80)}\n`);
 
     return {
       requestId,
       threadContext: initialResult.threadContext,
-      approvedParlays: stage3Result.approvedParlays,
+      approvedParlays: enrichedApproved,
       rejectedParlays: stage3Result.rejectedParlays,
       message: `Successfully generated ${stage3Result.approvedParlays.length} approved parlays`,
     };

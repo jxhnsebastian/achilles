@@ -135,6 +135,160 @@ export async function saveRequestMarkets(requestId: string, marketIds: string[])
   }
 }
 
+/**
+ * Fetch current YES prices from Polymarket Gamma API for given market IDs.
+ * Returns a map of marketId -> yesPrice (0-1 probability)
+ */
+/**
+ * Parse a field that may be a JSON string or already an array/object.
+ */
+function parseJsonField(x: any): any {
+  if (!x) return null;
+  if (Array.isArray(x) || typeof x === "object") return x;
+  try { return JSON.parse(x); } catch { return null; }
+}
+
+/**
+ * Extract the YES outcome's CLOB token ID and fallback price from a Gamma market object.
+ * Gamma returns outcomes/outcomePrices/clobTokenIds as JSON strings or arrays.
+ */
+function extractYesData(market: any): { yesTokenId: string | null; yesFallback: number | null } {
+  const outs: any[] | null = parseJsonField(market.outcomes);
+  const prices: any[] | null = parseJsonField(market.outcomePrices);
+  const tokenIds: any[] | null = parseJsonField(market.clobTokenIds);
+
+  if (!Array.isArray(outs)) return { yesTokenId: null, yesFallback: null };
+
+  const iYes = outs.findIndex((o: any) => String(o).toLowerCase() === "yes");
+  if (iYes === -1) return { yesTokenId: null, yesFallback: null };
+
+  const yesTokenId = Array.isArray(tokenIds) && tokenIds[iYes] ? String(tokenIds[iYes]) : null;
+  const yesFallback =
+    Array.isArray(prices) && prices[iYes] != null ? Number(prices[iYes]) : null;
+
+  return { yesTokenId, yesFallback };
+}
+
+/**
+ * Fetch live YES price from the Polymarket CLOB for a given token ID.
+ */
+async function fetchClobPrice(tokenId: string): Promise<number | null> {
+  try {
+    const url = `https://clob.polymarket.com/price?token_id=${encodeURIComponent(tokenId)}&side=BUY`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json() as any;
+    const p = Number(j.price);
+    return Number.isFinite(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Score how well a market question matches a search query (token overlap).
+ */
+function scoreQuestion(query: string, title: string): number {
+  const stop = new Set(["will","be","the","a","an","to","of","in","on","by","for"]);
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  const tok = (s: string) => norm(s).split(" ").filter(Boolean).filter(w => !stop.has(w));
+  const a = tok(query);
+  const b = new Set(tok(title));
+  if (!a.length) return 0;
+  let hit = 0;
+  for (const w of a) if (b.has(w)) hit++;
+  return hit / a.length;
+}
+
+/**
+ * Search Gamma public-search endpoint by question text and return top market candidates.
+ */
+async function searchGammaByQuestion(question: string): Promise<any[]> {
+  const url =
+    `https://gamma-api.polymarket.com/public-search` +
+    `?q=${encodeURIComponent(question)}` +
+    `&events_status=active` +
+    `&keep_closed_markets=0` +
+    `&limit_per_type=20` +
+    `&sort=volume24hr` +
+    `&ascending=false`;
+
+  const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
+  if (!r.ok) throw new Error(`public-search failed: ${r.status}`);
+  const res = await r.json() as any;
+
+  // Flatten markets from events
+  const markets: any[] = [];
+  for (const ev of res.events || []) {
+    for (const m of ev.markets || []) markets.push(m);
+  }
+  return markets;
+}
+
+export async function fetchPolymarketPrices(
+  markets: { id: string; question: string }[],
+): Promise<Map<string, { yesPrice: number; title: string }>> {
+  const priceMap = new Map<string, { yesPrice: number; title: string }>();
+
+  // Process each market individually — search by question text (same as test script)
+  await Promise.all(
+    markets.map(async ({ id, question }) => {
+      try {
+        console.log(`  🔍 Searching: ${question}`);
+        const candidates = await searchGammaByQuestion(question);
+
+        if (!candidates.length) {
+          console.warn(`  ✗ ${id}: no Gamma results for "${question}"`);
+          return;
+        }
+
+        // Pick best match by token overlap (same scoring as test script)
+        const scored = candidates
+          .map((m: any) => ({ m, s: scoreQuestion(question, m.question || m.title || "") }))
+          .sort((a: any, b: any) => b.s - a.s);
+
+        const best = scored[0];
+        if (!best || best.s < 0.2) {
+          console.warn(`  ✗ ${id}: best match score ${best?.s.toFixed(3) ?? "n/a"} too low`);
+          return;
+        }
+
+        const gammaMarket = best.m;
+        console.log(`  → matched: ${gammaMarket.question || gammaMarket.title} (score=${best.s.toFixed(3)})`);
+
+        // Extract YES token + fallback price
+        const { yesTokenId, yesFallback } = extractYesData(gammaMarket);
+
+        let yesPrice: number | null = null;
+
+        // Try live CLOB price first
+        if (yesTokenId) {
+          yesPrice = await fetchClobPrice(yesTokenId);
+        }
+
+        // Fall back to Gamma outcomePrices
+        if (yesPrice === null && yesFallback !== null) {
+          yesPrice = yesFallback;
+        }
+
+        if (yesPrice !== null && yesPrice > 0) {
+          priceMap.set(id, {
+            yesPrice,
+            title: gammaMarket.question || gammaMarket.title || question,
+          });
+          console.log(`  ✓ ${id} → YES=${(yesPrice * 100).toFixed(1)}% (${yesTokenId && yesPrice !== yesFallback ? "CLOB" : "fallback"})`);
+        } else {
+          console.warn(`  ✗ ${id}: no valid YES price`);
+        }
+      } catch (err: any) {
+        console.error(`  ✗ ${id}: error – ${err.message}`);
+      }
+    })
+  );
+
+  return priceMap;
+}
+
 export async function saveParlayResults(
   requestId: string,
   approvedParlays: ApprovedParlay[],

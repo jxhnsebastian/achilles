@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
-import { Loader2, Twitter } from "lucide-react";
+import { Loader2, Twitter, Send, CheckCircle2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import { cardDropIn, listContainer, listItem } from "./motion";
 import { Loader } from "lucide-react";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
+import { toast } from "sonner";
 
 type Phase = "idle" | "starting" | "polling" | "markets_ready" | "results_ready" | "error";
 
@@ -63,6 +64,13 @@ export default function ParlayAnalyzerPage() {
     const interval = setInterval(async () => {
       const res = await fetch(`/api/parlay/status/${requestId}`);
       const data: RequestStatusResponse = await res.json();
+      
+      console.log('📊 Status poll response:', {
+        hasMarkets: data.markets?.length,
+        hasApproved: data.approvedParlays?.length,
+        hasRejected: data.rejectedParlays?.length,
+        currentPhase: phase
+      });
 
       if (data.markets?.length && marketIds.length === 0) {
         setMarketIds(data.markets);
@@ -70,6 +78,7 @@ export default function ParlayAnalyzerPage() {
       }
 
       if (data.approvedParlays?.length || data.rejectedParlays?.length) {
+        console.log('✅ Received parlays:', data.approvedParlays, data.rejectedParlays);
         setParlays(data?.approvedParlays || []);
         setRejectedParlays(data?.rejectedParlays || []);
         setPhase("results_ready");
@@ -281,6 +290,34 @@ function ParlayCard({
   markets: Record<string, PolymarketMarket>;
 }) {
   const isApproved = parlay.verdict === "approved";
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  async function handleSendToWebApp() {
+    setSending(true);
+    try {
+      const res = await fetch("/api/parlay/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parlay, markets }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to send");
+      setSent(true);
+      const webAppUrl = process.env.NEXT_PUBLIC_PARLAY_WEBAPP_URL || "";
+      toast.success("Parlay sent to Parlay Web App!", {
+        description: data.parlayName,
+        action: webAppUrl ? {
+          label: "View ↗",
+          onClick: () => window.open(`${webAppUrl}/admin/parlays`, "_blank"),
+        } : undefined,
+      });
+    } catch (err: any) {
+      toast.error("Failed to send parlay", { description: err.message });
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <Card className={isApproved ? "border-border" : "border-dashed bg-muted/30 opacity-80"}>
@@ -301,18 +338,68 @@ function ParlayCard({
       <CardContent className="space-y-3">
         <Separator />
 
-        <ul className="space-y-1 text-sm">
-          {parlay.marketIds.map((id) => {
+        <ul className="space-y-2 text-sm">
+          {parlay.marketIds.map((id, idx) => {
             const market = markets[id];
             if (!market) return null;
 
+            // Find pricing info if available (only for approved parlays)
+            const approvedParlay = isApproved ? (parlay as ApprovedParlay) : null;
+            const leg = approvedParlay?.legs?.find((l) => l.marketId === id);
+            const yesPrice = leg?.yesPrice;
+
             return (
               <li key={id} className="leading-snug">
-                • {market.question}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="flex-1">• {market.question}</span>
+                  {yesPrice != null && (
+                    <Badge variant="outline" className="text-xs font-mono shrink-0">
+                      {(yesPrice * 100).toFixed(1)}%
+                    </Badge>
+                  )}
+                </div>
               </li>
             );
           })}
         </ul>
+
+        {isApproved && (parlay as ApprovedParlay).combinedDecimalOdds && (
+          <>
+            <Separator />
+            <div className="flex items-center justify-between text-sm">
+              <div className="space-y-1">
+                <div className="text-muted-foreground text-xs">Combined Probability</div>
+                <div className="font-mono font-semibold">
+                  {(((parlay as ApprovedParlay).combinedProb || 0) * 100).toFixed(2)}%
+                </div>
+              </div>
+              <div className="space-y-1 text-right">
+                <div className="text-muted-foreground text-xs">Decimal Odds</div>
+                <div className="font-mono font-semibold text-lg">
+                  {((parlay as ApprovedParlay).combinedDecimalOdds || 0).toFixed(2)}x
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+
+        {isApproved && (
+          <>
+            <Separator />
+            <Button
+              size="sm"
+              variant={sent ? "secondary" : "outline"}
+              className="w-full gap-2 text-xs"
+              disabled={sending || sent}
+              onClick={handleSendToWebApp}
+            >
+              {sending && <Loader2 className="h-3 w-3 animate-spin" />}
+              {sent && <CheckCircle2 className="h-3 w-3 text-green-500" />}
+              {!sending && !sent && <Send className="h-3 w-3" />}
+              {sent ? "Sent to Parlay Web App" : "Send to Parlay Web App"}
+            </Button>
+          </>
+        )}
       </CardContent>
     </Card>
   );
