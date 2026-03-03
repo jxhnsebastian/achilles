@@ -339,7 +339,7 @@ function ParlayCard({
         <Separator />
 
         <ul className="space-y-2 text-sm">
-          {parlay.marketIds.map((id, idx) => {
+          {parlay.marketIds.map((id) => {
             const market = markets[id];
             if (!market) return null;
 
