@@ -756,11 +756,11 @@ RETURN valid JSON only, no markdown:
   // Extract keywords from thesis for deterministic boost
   const thesisLower = thesis.toLowerCase();
   const winnerKeywords = ["win", "winner", "outright", "champions"];
-  
+
   // Extract team names (simple heuristic: capitalize words likely to be teams)
   const teamPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+will\s+win/g;
   const teamMatches = [...thesis.matchAll(teamPattern)].map((m) => m[1].toLowerCase());
-  
+
   // Extract competition names (common patterns)
   const competitions = [
     "premier league",
@@ -819,7 +819,8 @@ RETURN valid JSON only, no markdown:
     const dLower = (market.fullMarketData.description || "").toLowerCase();
     const combined = `${qLower} ${dLower}`;
     const hasTeam = teamMatches.length > 0 && teamMatches.some((t) => combined.includes(t));
-    const hasCompetition = foundCompetitions.length > 0 && foundCompetitions.some((c) => combined.includes(c));
+    const hasCompetition =
+      foundCompetitions.length > 0 && foundCompetitions.some((c) => combined.includes(c));
     const hasWinner = winnerKeywords.some((w) => combined.includes(w));
     if (hasTeam && hasCompetition && hasWinner) {
       const forceScore = 0.88;
@@ -910,19 +911,21 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
           const subEnriched = await fetchMarketObjects(subMatches);
           const subDeduped = deduplicateByEvent(
             subEnriched.filter((m) => m.fullMarketData !== null),
-            2,
+            10,
           );
 
           // Hardcoded DB fallback: inject AFTER dedup so it can't be evicted by liquidity sorting
-          const subForced = await fetchForcedFallbackMarkets(subQuery);
-          const subDedupedIds = new Set(subDeduped.map((m) => `${m.platform}:${m.market_id}`));
-          for (const fm of subForced) {
-            if (!subDedupedIds.has(`${fm.platform}:${fm.market_id}`)) {
-              console.log(`[FORCED FALLBACK] Injecting into group [${gi}]: "${fm.fullMarketData?.question}"`);
-              subDeduped.unshift(fm);
-              subDedupedIds.add(`${fm.platform}:${fm.market_id}`);
-            }
-          }
+          // const subForced = await fetchForcedFallbackMarkets(subQuery);
+          // const subDedupedIds = new Set(subDeduped.map((m) => `${m.platform}:${m.market_id}`));
+          // for (const fm of subForced) {
+          //   if (!subDedupedIds.has(`${fm.platform}:${fm.market_id}`)) {
+          //     console.log(
+          //       `[FORCED FALLBACK] Injecting into group [${gi}]: "${fm.fullMarketData?.question}"`,
+          //     );
+          //     subDeduped.unshift(fm);
+          //     subDedupedIds.add(`${fm.platform}:${fm.market_id}`);
+          //   }
+          // }
 
           const subFiltered = await filterMarketsByThesis(openai, subQuery, subDeduped);
           subFiltered.forEach((m) => {
@@ -981,15 +984,15 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
     );
 
     // Hardcoded DB fallback: inject AFTER dedup so it can't be evicted by liquidity sorting
-    const forcedMatches = await fetchForcedFallbackMarkets(queryText);
-    const marketsWithDataIds = new Set(marketsWithData.map((m) => `${m.platform}:${m.market_id}`));
-    for (const fm of forcedMatches) {
-      if (!marketsWithDataIds.has(`${fm.platform}:${fm.market_id}`)) {
-        console.log(`[FORCED FALLBACK] Injecting: "${fm.fullMarketData?.question}"`);
-        marketsWithData.unshift(fm);
-        marketsWithDataIds.add(`${fm.platform}:${fm.market_id}`);
-      }
-    }
+    // const forcedMatches = await fetchForcedFallbackMarkets(queryText);
+    // const marketsWithDataIds = new Set(marketsWithData.map((m) => `${m.platform}:${m.market_id}`));
+    // for (const fm of forcedMatches) {
+    //   if (!marketsWithDataIds.has(`${fm.platform}:${fm.market_id}`)) {
+    //     console.log(`[FORCED FALLBACK] Injecting: "${fm.fullMarketData?.question}"`);
+    //     marketsWithData.unshift(fm);
+    //     marketsWithDataIds.add(`${fm.platform}:${fm.market_id}`);
+    //   }
+    // }
 
     // LLM-based thesis relevance filter
     const filteredMarkets = await filterMarketsByThesis(openai, queryText, marketsWithData);
@@ -1079,7 +1082,9 @@ export async function generateParlays(
       }
     }
     if (subQueryGroupMap.size > 0) {
-      console.log(`Sub-query groups: ${new Set(subQueryGroupMap.values()).size} groups across ${subQueryGroupMap.size} markets`);
+      console.log(
+        `Sub-query groups: ${new Set(subQueryGroupMap.values()).size} groups across ${subQueryGroupMap.size} markets`,
+      );
     }
 
     console.log("Normalizing markets: ", initialResult.markets.length);
@@ -1156,7 +1161,7 @@ export async function generateParlays(
     // Enrich approved parlays with Polymarket prices
     console.log("\n📊 Fetching Polymarket prices for approved parlays...");
     let enrichedApproved = stage3Result.approvedParlays;
-    
+
     try {
       // Collect all unique market IDs from approved parlays, with their question text
       // so fetchPolymarketPrices can search Gamma by question (IDs are internal, not Gamma numeric IDs)
@@ -1166,16 +1171,16 @@ export async function generateParlays(
       }
 
       const allMarketEntries = Array.from(
-        new Set(stage3Result.approvedParlays.flatMap((p) => p.marketIds))
+        new Set(stage3Result.approvedParlays.flatMap((p) => p.marketIds)),
       ).map((id) => ({ id, question: marketQuestionMap.get(id) || id }));
 
       if (allMarketEntries.length > 0) {
         const priceMap = await fetchPolymarketPrices(allMarketEntries);
-        
+
         enrichedApproved = stage3Result.approvedParlays.map((parlay) => {
           const legs: ParlayLeg[] = [];
           let validLegs = true;
-          
+
           for (const marketId of parlay.marketIds) {
             const priceData = priceMap.get(marketId);
             if (priceData) {
@@ -1196,16 +1201,16 @@ export async function generateParlays(
               validLegs = false;
             }
           }
-          
+
           // Calculate combined odds if all legs have valid prices
           let combinedProb: number | undefined;
           let combinedDecimalOdds: number | undefined;
-          
+
           if (validLegs && legs.every((leg) => leg.impliedProb !== null)) {
             combinedProb = legs.reduce((acc, leg) => acc * (leg.impliedProb || 1), 1);
             combinedDecimalOdds = combinedProb > 0 ? 1 / combinedProb : undefined;
           }
-          
+
           return {
             ...parlay,
             legs,
@@ -1213,16 +1218,16 @@ export async function generateParlays(
             combinedDecimalOdds,
           };
         });
-        
+
         console.log(
-          `✓ Enriched ${enrichedApproved.length} parlays with Polymarket prices (${priceMap.size}/${allMarketEntries.length} markets found)`
+          `✓ Enriched ${enrichedApproved.length} parlays with Polymarket prices (${priceMap.size}/${allMarketEntries.length} markets found)`,
         );
       }
     } catch (err) {
       console.error("Failed to enrich parlays with prices:", err);
       // Continue with unenriched parlays
     }
-    
+
     // Save results to database
     await saveParlayResults(requestId, enrichedApproved, stage3Result.rejectedParlays);
 
