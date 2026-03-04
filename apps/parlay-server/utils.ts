@@ -111,8 +111,8 @@ export async function saveRequestMarkets(requestId: string, marketIds: string[])
         try {
           await client.query(
             `
-              INSERT INTO requests (request_id, markets, created_at, updated_at)
-              VALUES ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+              INSERT INTO requests (request_id, markets, status, created_at, updated_at)
+              VALUES ($1, $2, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
               ON CONFLICT (request_id) 
               DO UPDATE SET 
                 markets = EXCLUDED.markets,
