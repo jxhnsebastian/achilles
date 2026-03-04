@@ -746,6 +746,7 @@ export async function searchMarketsFromThread(
 export function deduplicateByEvent(
   markets: EnrichedPineconeMarketHit[],
   maxPerEvent: number,
+  query: string,
 ): EnrichedPineconeMarketHit[] {
   const eventGroups = new Map<string, PineconeMarketHit[]>();
 
@@ -769,8 +770,18 @@ export function deduplicateByEvent(
       (a, b) => (b.metadata.liquidity || 0) - (a.metadata.liquidity || 0),
     );
 
+    const queryTerms = query.toLowerCase().split(/\s+/);
+    
+    const relevantMissing = sorted.slice(maxPerEvent).filter(market => {
+      const marketText = (market.metadata.title || '').toLowerCase();
+      const matchScore = queryTerms.filter(term => 
+        term.length > 3 && marketText.includes(term)
+      ).length;
+      return matchScore >= 3;
+    });
+    // console.log("relevant missing", relevantMissing.map(m => m.metadata.title));
     // Take top N
-    results.push(...sorted.slice(0, maxPerEvent));
+    results.push(...sorted.slice(0, maxPerEvent), ...relevantMissing);
   }
 
   // Re-sort by original relevance score

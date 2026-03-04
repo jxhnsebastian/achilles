@@ -912,6 +912,7 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
           const subDeduped = deduplicateByEvent(
             subEnriched.filter((m) => m.fullMarketData !== null),
             10,
+            embeddingQuery
           );
 
           // Hardcoded DB fallback: inject AFTER dedup so it can't be evicted by liquidity sorting
@@ -978,6 +979,7 @@ export async function analyzeQuery(config: AnalyzeThreadConfig): Promise<Analyze
     const marketsWithData = deduplicateByEvent(
       enrichedMatches.filter((m) => m.fullMarketData !== null),
       2,
+      queryText
     );
     console.log(
       `Enriched ${marketsWithData.length}/${enrichedMatches.length} markets with full data`,
