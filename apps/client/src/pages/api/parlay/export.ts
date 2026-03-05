@@ -17,11 +17,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: "Invalid parlay data" });
   }
 
-  // Build a short display name from the reason field (max 60 chars)
-  const parlayName = parlay.reason
-    ? parlay.reason.slice(0, 60).replace(/\.$/, "").trim()
-    : `${parlay.marketIds.length}-Leg Parlay`;
-
   // Transform LP-Tools legs → Parlay-Web-App legs
   const legs = parlay.marketIds.map((marketId: string, idx: number) => {
     const legData = parlay.legs?.find((l: any) => l.marketId === marketId);
@@ -30,19 +25,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Convert probability → decimal odds. Fall back to 1.0 if price unavailable.
     const decimalOdds = yesPrice && yesPrice > 0 ? parseFloat((1 / yesPrice).toFixed(4)) : 1.0;
 
+    // marketIds are "polymarket:12345" but markets map is keyed by plain "12345"
+    const plainId = marketId.includes(":") ? marketId.split(":")[1] : marketId;
+    const marketData = markets[plainId] || markets[marketId];
+
     // Prefer the market question from the full markets map, fall back to ParlayLeg.title
     const marketQuestion =
-      markets[marketId]?.question ||
+      marketData?.question ||
       legData?.title ||
       `Market ${idx + 1}`;
+
+    // Pass resolution date so stardust can display it per leg
+    const endDate = marketData?.endDateIso || marketData?.endDate || null;
 
     return {
       marketId,
       selection: "Yes",
       odds: decimalOdds,
       marketQuestion,
+      ...(endDate ? { endDate } : {}),
     };
   });
+
+  // Build parlay name from the actual leg market questions
+  const shortQuestion = (q: string, maxLen = 30) => {
+    if (q.length <= maxLen) return q;
+    const cut = q.slice(0, maxLen).lastIndexOf(" ");
+    return (cut > 12 ? q.slice(0, cut) : q.slice(0, maxLen)) + "…";
+  };
+  const parlayName = legs.map((l: any) => shortQuestion(l.marketQuestion)).join(" + ");
 
   const combinedOdds = parlay.combinedDecimalOdds
     ? parlay.combinedDecimalOdds.toFixed(2)
