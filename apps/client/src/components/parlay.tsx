@@ -61,6 +61,7 @@ export default function ParlayAnalyzerPage() {
   useEffect(() => {
     if (!requestId) return;
 
+    
     const interval = setInterval(async () => {
       const res = await fetch(`/api/parlay/status/${requestId}`);
       const data: RequestStatusResponse = await res.json();
