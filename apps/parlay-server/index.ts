@@ -3,6 +3,8 @@ import express from "express";
 import Bull from "bull";
 import { getDbPool, withRetry } from "./utils";
 import { generateParlays } from "./parlay";
+import { Request, Response } from "express";
+import { ParlayInput, calculateParlayOdds, validateParlayInput } from "./odds";
 
 const PORT = process.env.PORT || 5000;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
@@ -158,6 +160,79 @@ app.get("/job/:jobId", async (req, res) => {
 
   const state = await job.getState();
   return res.json({ jobId: job.id, state, attempts: job.attemptsMade });
+});
+
+// ─────────────────────────────────────────────
+// POST /parlay/odds
+// ─────────────────────────────────────────────
+
+/**
+ * POST /parlay/odds
+ *
+ * Request body:
+ * {
+ *   betAmount: number,           // USD amount to bet
+ *   legs: [
+ *     {
+ *       source: "polymarket" | "kalshi",
+ *       marketSlug: string,      // Polymarket slug or Kalshi ticker
+ *       outcome: string          // Outcome label; Kalshi must be "yes" | "no"
+ *     },
+ *     ...                        // 2–10 legs
+ *   ]
+ * }
+ *
+ * Response 200:
+ * {
+ *   success: true,
+ *   data: ParlayResult
+ * }
+ *
+ * Response 400: validation errors
+ * Response 500: unexpected internal error
+ */
+
+app.post("/parlay/odds", async (req: Request, res: Response) => {
+  const { data, errors } = validateParlayInput(req.body);
+
+  if (errors.length > 0 || data === null) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid request body",
+      details: errors,
+    });
+  }
+
+  let result;
+  try {
+    result = await calculateParlayOdds(data as ParlayInput);
+  } catch (err) {
+    console.error("[POST /parlay/odds] Unexpected error:", err);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error while calculating parlay odds",
+      ...(process.env.NODE_ENV !== "production" && {
+        detail: err instanceof Error ? err.message : String(err),
+      }),
+    });
+  }
+
+  // 200 even when some legs are invalid — the caller can inspect per-leg errors.
+  // Only escalate to 422 if every single leg failed (nothing useful to return).
+  const allLegsFailed = result.legs.every((leg) => leg.invalidReason !== undefined);
+
+  if (allLegsFailed) {
+    return res.status(422).json({
+      success: false,
+      error: "All parlay legs failed to resolve",
+      data: result,
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    data: result,
+  });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────────
