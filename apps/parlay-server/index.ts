@@ -23,9 +23,9 @@ const parlayQueue = SKIP_REDIS
   ? null
   : new Bull<ParlayJob>("parlay-generation", {
       redis: {
-        host: "still-mackerel-17195.upstash.io",
+        host: "knowing-airedale-30341.upstash.io",
         port: 6379,
-        password: "AUMrAAIncDFlYTdlZGI2MjRiN2E0M2FjYmU0ODg2NGQzMDk3ZjhhMXAxMTcxOTU",
+        password: "AXaFAAIncDJiZWY1MWMyMDFkMzc0OTNhYWQ5MTRmOTIyNzQ3NGM1MXAyMzAzNDE",
         username: "default",
         tls: {},
       },
