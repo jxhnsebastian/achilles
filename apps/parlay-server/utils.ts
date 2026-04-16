@@ -8,7 +8,9 @@ import {
   RetryConfig,
   TwitterAPITweet,
 } from "./types";
-import { Pool } from "pg";
+import connectDatabase from "./db";
+import { Request as RequestModel } from "./models/Request";
+import { Market } from "./models/Market";
 import OpenAI from "openai";
 import { Index, RecordMetadata } from "@pinecone-database/pinecone";
 
@@ -71,65 +73,21 @@ export function parseDateSafely(dateStr: string): Date {
   }
 }
 
-export function getDbPool(): Pool {
-  const dbUrl = process.env.PARLAY_DATABASE_URL;
-
-  if (!dbUrl) {
-    throw new Error("PARLAY_DATABASE_URL not set");
-  }
-
-  let connectionString = dbUrl;
-
-  if (dbUrl.includes("#") || (dbUrl.includes("@") && !dbUrl.startsWith("postgres://"))) {
-    try {
-      const match = dbUrl.match(/postgresql:\/\/([^:]+):([^@]+)@(.+)/);
-      if (match) {
-        const [, user, password, rest] = match;
-        const encodedPassword = encodeURIComponent(password);
-        connectionString = `postgresql://${user}:${encodedPassword}@${rest}`;
-      }
-    } catch (e) {
-      console.warn("Failed to parse PARLAY_DATABASE_URL, using as-is:", e);
-    }
-  }
-
-  return new Pool({
-    connectionString,
-    ssl: {
-      rejectUnauthorized: false,
-    },
-  });
-}
-
 export async function saveRequestMarkets(requestId: string, marketIds: string[]): Promise<void> {
   try {
-    const pool = getDbPool();
+    await connectDatabase();
 
-    await withRetry(
-      async () => {
-        const client = await pool.connect();
-        try {
-          await client.query(
-            `
-              INSERT INTO requests (request_id, markets, status, created_at, updated_at)
-              VALUES ($1, $2, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-              ON CONFLICT (request_id) 
-              DO UPDATE SET 
-                markets = EXCLUDED.markets,
-                updated_at = CURRENT_TIMESTAMP
-              `,
-            [requestId, marketIds],
-          );
-          console.log(`Saved ${marketIds.length} markets for request ${requestId}`);
-        } finally {
-          client.release();
-        }
+    await RequestModel.findOneAndUpdate(
+      { requestId },
+      {
+        $set: { markets: marketIds, updatedAt: new Date() },
+        $setOnInsert: { status: "pending", createdAt: new Date() },
       },
-      { maxRetries: 2, initialDelay: 1000 },
-      `Database save for request ${requestId}`,
+      { upsert: true, new: true },
     );
+
+    console.log(`Saved ${marketIds.length} markets for request ${requestId}`);
     console.log("Db ingestion done");
-    await pool.end();
   } catch (error) {
     console.error("Failed to save request to database:", error);
   }
@@ -145,7 +103,11 @@ export async function saveRequestMarkets(requestId: string, marketIds: string[])
 function parseJsonField(x: any): any {
   if (!x) return null;
   if (Array.isArray(x) || typeof x === "object") return x;
-  try { return JSON.parse(x); } catch { return null; }
+  try {
+    return JSON.parse(x);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -163,8 +125,7 @@ function extractYesData(market: any): { yesTokenId: string | null; yesFallback: 
   if (iYes === -1) return { yesTokenId: null, yesFallback: null };
 
   const yesTokenId = Array.isArray(tokenIds) && tokenIds[iYes] ? String(tokenIds[iYes]) : null;
-  const yesFallback =
-    Array.isArray(prices) && prices[iYes] != null ? Number(prices[iYes]) : null;
+  const yesFallback = Array.isArray(prices) && prices[iYes] != null ? Number(prices[iYes]) : null;
 
   return { yesTokenId, yesFallback };
 }
@@ -177,7 +138,7 @@ async function fetchClobPrice(tokenId: string): Promise<number | null> {
     const url = `https://clob.polymarket.com/price?token_id=${encodeURIComponent(tokenId)}&side=BUY`;
     const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!r.ok) return null;
-    const j = await r.json() as any;
+    const j = (await r.json()) as any;
     const p = Number(j.price);
     return Number.isFinite(p) ? p : null;
   } catch {
@@ -189,9 +150,18 @@ async function fetchClobPrice(tokenId: string): Promise<number | null> {
  * Score how well a market question matches a search query (token overlap).
  */
 function scoreQuestion(query: string, title: string): number {
-  const stop = new Set(["will","be","the","a","an","to","of","in","on","by","for"]);
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
-  const tok = (s: string) => norm(s).split(" ").filter(Boolean).filter(w => !stop.has(w));
+  const stop = new Set(["will", "be", "the", "a", "an", "to", "of", "in", "on", "by", "for"]);
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const tok = (s: string) =>
+    norm(s)
+      .split(" ")
+      .filter(Boolean)
+      .filter((w) => !stop.has(w));
   const a = tok(query);
   const b = new Set(tok(title));
   if (!a.length) return 0;
@@ -215,7 +185,7 @@ async function searchGammaByQuestion(question: string): Promise<any[]> {
 
   const r = await fetch(url, { signal: AbortSignal.timeout(12000) });
   if (!r.ok) throw new Error(`public-search failed: ${r.status}`);
-  const res = await r.json() as any;
+  const res = (await r.json()) as any;
 
   // Flatten markets from events
   const markets: any[] = [];
@@ -254,7 +224,9 @@ export async function fetchPolymarketPrices(
         }
 
         const gammaMarket = best.m;
-        console.log(`  → matched: ${gammaMarket.question || gammaMarket.title} (score=${best.s.toFixed(3)})`);
+        console.log(
+          `  → matched: ${gammaMarket.question || gammaMarket.title} (score=${best.s.toFixed(3)})`,
+        );
 
         // Extract YES token + fallback price
         const { yesTokenId, yesFallback } = extractYesData(gammaMarket);
@@ -276,14 +248,16 @@ export async function fetchPolymarketPrices(
             yesPrice,
             title: gammaMarket.question || gammaMarket.title || question,
           });
-          console.log(`  ✓ ${id} → YES=${(yesPrice * 100).toFixed(1)}% (${yesTokenId && yesPrice !== yesFallback ? "CLOB" : "fallback"})`);
+          console.log(
+            `  ✓ ${id} → YES=${(yesPrice * 100).toFixed(1)}% (${yesTokenId && yesPrice !== yesFallback ? "CLOB" : "fallback"})`,
+          );
         } else {
           console.warn(`  ✗ ${id}: no valid YES price`);
         }
       } catch (err: any) {
         console.error(`  ✗ ${id}: error – ${err.message}`);
       }
-    })
+    }),
   );
 
   return priceMap;
@@ -294,114 +268,74 @@ export async function saveParlayResults(
   approvedParlays: ApprovedParlay[],
   rejectedParlays: RejectedParlay[],
 ): Promise<void> {
-  const pool = getDbPool();
-
   try {
-    await withRetry(
-      async () => {
-        const client = await pool.connect();
-        try {
-          await client.query(
-            `
-              UPDATE requests
-              SET result = $1, updated_at = CURRENT_TIMESTAMP
-              WHERE request_id = $2
-              `,
-            [
-              JSON.stringify({
-                approvedParlays,
-                rejectedParlays,
-                timestamp: new Date().toISOString(),
-              }),
-              requestId,
-            ],
-          );
-          console.log(
-            `\n✓ Saved ${approvedParlays.length} approved parlays to database for request ${requestId}`,
-          );
-        } finally {
-          client.release();
-        }
+    await connectDatabase();
+
+    await RequestModel.findOneAndUpdate(
+      { requestId },
+      {
+        $set: {
+          result: {
+            approvedParlays,
+            rejectedParlays,
+            timestamp: new Date().toISOString(),
+          },
+          updatedAt: new Date(),
+        },
       },
-      { maxRetries: 2, initialDelay: 1000 },
-      `Database save for parlay results ${requestId}`,
+    );
+
+    console.log(
+      `\n✓ Saved ${approvedParlays.length} approved parlays to database for request ${requestId}`,
     );
   } catch (error) {
     console.error("Failed to save parlay results to database:", error);
     throw error;
-  } finally {
-    await pool.end();
   }
 }
 
 export async function fetchMarketObjects(
   marketHits: PineconeMarketHit[],
 ): Promise<EnrichedPineconeMarketHit[]> {
-  if (marketHits.length === 0) {
-    return [];
-  }
+  if (marketHits.length === 0) return [];
 
   try {
-    const pool = getDbPool();
+    await connectDatabase();
 
-    const enrichedMarkets = await withRetry(
-      async () => {
-        const client = await pool.connect();
-        try {
-          // Group markets by platform for efficient querying
-          const marketsByPlatform = marketHits.reduce(
-            (acc, hit) => {
-              if (!acc[hit.platform]) {
-                acc[hit.platform] = [];
-              }
-              acc[hit.platform].push(hit.market_id);
-              return acc;
-            },
-            {} as Record<string, string[]>,
-          );
-
-          // Fetch all markets in parallel
-          const allMarkets: Record<string, PolymarketMarket> = {};
-
-          await Promise.all(
-            Object.entries(marketsByPlatform).map(async ([platform, ids]) => {
-              const result = await client.query(
-                `SELECT platform, id, raw 
-                   FROM markets 
-                   WHERE platform = $1 AND id = ANY($2)`,
-                [platform, ids],
-              );
-
-              result.rows.forEach((row) => {
-                const key = `${row.platform}:${row.id}`;
-                allMarkets[key] = row.raw as PolymarketMarket;
-              });
-            }),
-          );
-
-          console.log(`Fetched ${Object.keys(allMarkets).length} market objects from database`);
-
-          // Enrich the hits with full market data
-          return marketHits.map((hit) => {
-            const key = `${hit.platform}:${hit.market_id}`;
-            return {
-              ...hit,
-              fullMarketData: allMarkets[key] || null,
-            };
-          });
-        } finally {
-          client.release();
-        }
+    // Group market IDs by platform
+    const marketsByPlatform = marketHits.reduce(
+      (acc, hit) => {
+        if (!acc[hit.platform]) acc[hit.platform] = [];
+        acc[hit.platform].push(hit.market_id);
+        return acc;
       },
-      { maxRetries: 2, initialDelay: 1000 },
-      "Database fetch for market objects",
+      {} as Record<string, string[]>,
     );
 
-    await pool.end();
-    return enrichedMarkets;
+    // Fetch all platforms in parallel
+    const allMarkets: Record<string, PolymarketMarket> = {};
+
+    await Promise.all(
+      Object.entries(marketsByPlatform).map(async ([platform, ids]) => {
+        const rows = await Market.find(
+          { platform, id: { $in: ids } },
+          { platform: 1, id: 1, raw: 1, _id: 0 },
+        ).lean();
+
+        rows.forEach((row) => {
+          allMarkets[`${row.platform}:${row.id}`] = row.raw as PolymarketMarket;
+        });
+      }),
+    );
+
+    console.log(`Fetched ${Object.keys(allMarkets).length} market objects from database`);
+
+    return marketHits.map((hit) => ({
+      ...hit,
+      fullMarketData: allMarkets[`${hit.platform}:${hit.market_id}`] ?? null,
+    }));
   } catch (error) {
     console.error("Failed to fetch market objects from database:", error);
-    // Return original hits without enrichment on error
     return marketHits.map((hit) => ({ ...hit, fullMarketData: null }));
   }
 }
@@ -413,29 +347,27 @@ export async function fetchMarketObjects(
  *   - Arsenal + Premier League
  *   - Bayern + Champions League
  */
+// TODO: this function s very brittle and only catches a couple specific cases.
 export async function fetchForcedFallbackMarkets(
   query: string,
 ): Promise<EnrichedPineconeMarketHit[]> {
   const q = query.toLowerCase();
 
-  // Build per-entity SQL clauses with parameterised values
-  const clauses: string[] = [];
-  const params: any[] = ["polymarket"]; // $1
-  let pi = 2; // next param index
+  // Build up $or clauses for each entity match
+  const orClauses: Record<string, unknown>[] = [];
 
   // Arsenal + Premier League
   if (
     q.includes("arsenal") &&
     (q.includes("premier league") || q.includes("epl") || q.includes("english premier league"))
   ) {
-    // question ILIKE '%Arsenal%' AND (ILIKE '%Premier League%' OR '%EPL%' OR '%English Premier League%') AND ILIKE '%win%'
-    clauses.push(
-      `(raw->>'question' ILIKE $${pi} AND ` +
-        `(raw->>'question' ILIKE $${pi + 1} OR raw->>'question' ILIKE $${pi + 2} OR raw->>'question' ILIKE $${pi + 3}) AND ` +
-        `raw->>'question' ILIKE $${pi + 4})`,
-    );
-    params.push("%Arsenal%", "%Premier League%", "%EPL%", "%English Premier League%", "%win%");
-    pi += 5;
+    orClauses.push({
+      "raw.question": /Arsenal/i,
+      $and: [
+        { "raw.question": /Premier League|EPL|English Premier League/i },
+        { "raw.question": /win/i },
+      ],
+    });
   }
 
   // Bayern + Champions League
@@ -443,55 +375,53 @@ export async function fetchForcedFallbackMarkets(
     q.includes("bayern") &&
     (q.includes("champions league") || q.includes("ucl") || q.includes("uefa champions league"))
   ) {
-    clauses.push(
-      `(raw->>'question' ILIKE $${pi} AND ` +
-        `(raw->>'question' ILIKE $${pi + 1} OR raw->>'question' ILIKE $${pi + 2} OR raw->>'question' ILIKE $${pi + 3}) AND ` +
-        `raw->>'question' ILIKE $${pi + 4})`,
-    );
-    params.push("%Bayern%", "%Champions League%", "%UCL%", "%UEFA Champions League%", "%win%");
-    pi += 5;
+    orClauses.push({
+      "raw.question": /Bayern/i,
+      $and: [
+        { "raw.question": /Champions League|UCL|UEFA Champions League/i },
+        { "raw.question": /win/i },
+      ],
+    });
   }
 
-  if (clauses.length === 0) return [];
-
-  const sql = `
-    SELECT platform, id, raw
-    FROM markets
-    WHERE platform = $1
-      AND (raw->>'active')::boolean = true
-      AND (raw->>'closed')::boolean = false
-      AND (${clauses.join(" OR ")})
-    LIMIT 20
-  `;
+  if (orClauses.length === 0) return [];
 
   try {
-    const pool = getDbPool();
-    const client = await pool.connect();
-    try {
-      const result = await client.query(sql, params);
-      console.log(
-        `[FORCED FALLBACK] DB matched ${result.rows.length} market(s) for: "${query}"`,
-      );
-      return result.rows.map((row) => ({
+    await connectDatabase();
+
+    const rows = await Market.find(
+      {
+        platform: "polymarket",
+        "raw.active": true,
+        "raw.closed": false,
+        $or: orClauses,
+      },
+      { platform: 1, id: 1, raw: 1, _id: 0 },
+    )
+      .limit(20)
+      .lean();
+
+    console.log(`[FORCED FALLBACK] DB matched ${rows.length} market(s) for: "${query}"`);
+
+    return rows.map((row) => {
+      const raw = row.raw as PolymarketMarket;
+      return {
         market_id: String(row.id),
         platform: row.platform as "polymarket" | "kalshi",
-        score: 0.99, // guaranteed top rank
+        score: 0.99,
         metadata: {
           market_id: String(row.id),
           platform: row.platform,
-          title: (row.raw as PolymarketMarket)?.question || "",
+          title: (raw?.question as string) || "",
           resolution_time: null,
           status: "active",
           liquidity: null,
           volume: null,
           tags: null,
         },
-        fullMarketData: row.raw as PolymarketMarket,
-      }));
-    } finally {
-      client.release();
-      await pool.end();
-    }
+        fullMarketData: raw,
+      };
+    });
   } catch (err) {
     console.error("[FORCED FALLBACK] DB error:", err);
     return [];
@@ -771,11 +701,11 @@ export function deduplicateByEvent(
     );
 
     const queryTerms = query.toLowerCase().split(/\s+/);
-    
-    const relevantMissing = sorted.slice(maxPerEvent).filter(market => {
-      const marketText = (market.metadata.title || '').toLowerCase();
-      const matchScore = queryTerms.filter(term => 
-        term.length > 3 && marketText.includes(term)
+
+    const relevantMissing = sorted.slice(maxPerEvent).filter((market) => {
+      const marketText = (market.metadata.title || "").toLowerCase();
+      const matchScore = queryTerms.filter(
+        (term) => term.length > 3 && marketText.includes(term),
       ).length;
       return matchScore >= 3;
     });

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { RequestStatusResponse } from "@/lib/parlay-types";
-import { getDbPool } from "@/lib/parlay-utils";
+import connectDatabase from "@/lib/db";
+import { Request } from "@/models/Request";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {
@@ -13,43 +14,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: "Invalid requestId" });
   }
 
-  const pool = getDbPool();
-  const client = await pool.connect();
+  await connectDatabase();
 
   try {
-    const result = await client.query(
-      `
-      SELECT markets, result
-      FROM requests
-      WHERE request_id = $1
-      `,
-      [requestId],
-    );
+    const doc = await Request.findOne({ requestId }, { markets: 1, result: 1, _id: 0 }).lean();
 
-    if (!result.rows.length) {
+    if (!doc) {
       return res.status(200).json({ requestId });
     }
 
-    const row = result.rows[0];
-
     const response: RequestStatusResponse = {
       requestId,
-      markets: row.markets ?? undefined,
+      markets: doc.markets ?? undefined,
     };
 
-    if (row.result) {
-      const parsed = row.result;
-      response.approvedParlays = parsed.approvedParlays ?? [];
-      response.rejectedParlays = parsed.rejectedParlays ?? [];
-      console.log(`✅ Returning status for ${requestId}: ${response.approvedParlays?.length || 0} approved, ${response.rejectedParlays?.length || 0} rejected`);
+    if (doc.result) {
+      response.approvedParlays = (doc.result.approvedParlays as any) ?? [];
+      response.rejectedParlays = (doc.result.rejectedParlays as any) ?? [];
+      console.log(
+        `✅ Returning status for ${requestId}: ${response.approvedParlays?.length || 0} approved, ${response.rejectedParlays?.length || 0} rejected`,
+      );
     }
 
     return res.status(200).json(response);
   } catch (err) {
     console.error("Request status fetch failed:", err);
     return res.status(500).json({ error: "Internal server error" });
-  } finally {
-    client.release();
-    await pool.end();
   }
 }

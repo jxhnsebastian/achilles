@@ -1,104 +1,121 @@
 import "dotenv/config";
 import express from "express";
-import Bull from "bull";
-import { getDbPool, withRetry } from "./utils";
+import mongoose from "mongoose";
+import { v4 as uuidv4 } from "uuid";
 import { generateParlays } from "./parlay";
 import { Request, Response } from "express";
 import { ParlayInput, calculateParlayOdds, validateParlayInput } from "./odds";
+import { Request as RequestModel, RequestStatus } from "./models/Request";
+import connectDatabase from "./db";
 
 const PORT = process.env.PORT || 5000;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
-const REDIS_URL = process.env.REDIS_URL;
-const SKIP_REDIS = process.env.SKIP_REDIS === "true" || !REDIS_URL;
+const MONGO_URL = process.env.MONGO_URL!;
 const CONCURRENCY = Number(process.env.CONCURRENCY || 2);
 
-interface ParlayJob {
+// ── Mongo ──────────────────────────────────────────────────────────────────────
+connectDatabase()
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
+
+// ── In-memory Queue ────────────────────────────────────────────────────────────
+
+interface QueueJob {
+  jobId: string;
   requestId: string;
   query: string;
   tweet: boolean;
+  enqueuedAt: Date;
+  startedAt?: Date;
+  status: "waiting" | "running";
+  attempts: number;
 }
 
-// Only initialize Bull queue if not skipping Redis
-const parlayQueue = SKIP_REDIS
-  ? null
-  : new Bull<ParlayJob>("parlay-generation", {
-      redis: {
-        host: "knowing-airedale-30341.upstash.io",
-        port: 6379,
-        password: "AXaFAAIncDJiZWY1MWMyMDFkMzc0OTNhYWQ5MTRmOTIyNzQ3NGM1MXAyMzAzNDE",
-        username: "default",
-        tls: {},
-      },
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: { type: "exponential", delay: 2000 },
-        removeOnComplete: 100,
-        removeOnFail: 50,
-      },
+const runningJobs = new Map<string, QueueJob>();
+const waitQueue: QueueJob[] = [];
+
+function queueStats() {
+  return {
+    running: runningJobs.size,
+    waiting: waitQueue.length,
+    runningJobs: Array.from(runningJobs.values()).map((j) => ({
+      jobId: j.jobId,
+      requestId: j.requestId,
+      startedAt: j.startedAt,
+      attempts: j.attempts,
+    })),
+  };
+}
+
+async function updateRequestStatus(requestId: string, status: RequestStatus) {
+  await RequestModel.findOneAndUpdate({ requestId }, { status, updatedAt: new Date() });
+  console.log(`[${requestId}] Status updated to ${status}`);
+}
+
+async function executeJob(job: QueueJob) {
+  job.status = "running";
+  job.startedAt = new Date();
+  runningJobs.set(job.jobId, job);
+
+  console.log(`[${job.requestId}] Starting job ${job.jobId} (running: ${runningJobs.size})`);
+
+  try {
+    await generateParlays({
+      requestId: job.requestId,
+      query: job.query,
+      tweet: job.tweet,
     });
-
-async function updateRequestStatus(requestId: string, status: "pending" | "completed" | "failed") {
-  const pool = getDbPool();
-
-  await withRetry(
-    async () => {
-      const client = await pool.connect();
-      try {
-        await client.query(
-          `UPDATE requests
-           SET status = $1,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE request_id = $2`,
-          [status, requestId],
-        );
-        console.log(`[${requestId}] Status updated to ${status}`);
-      } finally {
-        client.release();
-      }
-    },
-    { maxRetries: 2, initialDelay: 1000 },
-    `updateRequestStatus for ${requestId}`,
-  );
+    await updateRequestStatus(job.requestId, "completed");
+    console.log(`[${job.requestId}] Job ${job.jobId} completed`);
+  } catch (err) {
+    job.attempts += 1;
+    console.error(`[${job.requestId}] Job ${job.jobId} failed (attempt ${job.attempts}):`, err);
+    await updateRequestStatus(job.requestId, "failed");
+  } finally {
+    runningJobs.delete(job.jobId);
+    drainQueue();
+  }
 }
 
-// Only set up Bull queue processing if not skipping Redis
-if (!SKIP_REDIS && parlayQueue) {
-  parlayQueue.process(CONCURRENCY, async (job: any) => {
-    const { requestId, query, tweet } = job.data;
-    console.log(`[${requestId}] Processing job ${job.id}`);
+function drainQueue() {
+  while (runningJobs.size < CONCURRENCY && waitQueue.length > 0) {
+    const next = waitQueue.shift()!;
+    console.log(
+      `[${next.requestId}] Dequeuing job ${next.jobId} from waitQueue (position was ${waitQueue.length})`,
+    );
+    executeJob(next); // intentionally not awaited — fire and forget
+  }
+}
 
-    await updateRequestStatus(requestId, "pending");
+async function enqueueJob(requestId: string, query: string, tweet: boolean): Promise<QueueJob> {
+  const job: QueueJob = {
+    jobId: uuidv4(),
+    requestId,
+    query,
+    tweet,
+    enqueuedAt: new Date(),
+    status: "waiting",
+    attempts: 0,
+  };
 
-    try {
-      await generateParlays({ requestId, query, tweet });
+  if (runningJobs.size < CONCURRENCY) {
+    executeJob(job); // fire and forget
+  } else {
+    waitQueue.push(job);
+    console.log(
+      `[${requestId}] Job ${job.jobId} queued (position: ${waitQueue.length}, running: ${runningJobs.size})`,
+    );
+  }
 
-      await updateRequestStatus(requestId, "completed");
-      console.log(`[${requestId}] Completed`);
-    } catch (err) {
-      console.error(`[${requestId}] Generation failed:`, err);
-      if (job.attemptsMade >= (job.opts.attempts ?? 1) - 1) {
-        await updateRequestStatus(requestId, "failed");
-      }
-      throw err;
-    }
-  });
-
-  parlayQueue.on("failed", (job, err) => {
-    console.error(`Job ${job.id} failed after all attempts:`, err.message);
-  });
-
-  parlayQueue.on("completed", (job) => {
-    console.log(`Job ${job.id} completed successfully`);
-  });
+  return job;
 }
 
 // ── Middleware ─────────────────────────────────────────────────────────────────
 const app = express();
 app.use(express.json());
 
-// Simple shared-secret auth for all routes
 app.use((req, res, next) => {
-  if (req.path === "/health") return next(); // health check is public
+  if (req.path === "/health") return next();
   const secret = req.headers["x-internal-secret"];
   if (!secret || secret !== INTERNAL_SECRET) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -107,8 +124,9 @@ app.use((req, res, next) => {
 });
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
+
 app.get("/health", (_req, res) => {
-  res.json({ status: "ok", mode: SKIP_REDIS ? "direct" : "queue" });
+  res.json({ status: "ok", ...queueStats() });
 });
 
 app.post("/enqueue", async (req, res) => {
@@ -119,78 +137,33 @@ app.post("/enqueue", async (req, res) => {
   }
 
   try {
-    if (SKIP_REDIS) {
-      // Direct execution mode (local dev)
-      console.log(`[${requestId}] Running directly (SKIP_REDIS mode)`);
-      await updateRequestStatus(requestId, "pending");
+    // Write pending entry to Mongo
+    await RequestModel.create({
+      requestId,
+      markets: [], // populated later by generateParlays if needed
+      status: "pending",
+    });
 
-      // Run async without blocking the response
-      generateParlays({ requestId, query, tweet: tweet ?? false })
-        .then(async () => {
-          await updateRequestStatus(requestId, "completed");
-          console.log(`[${requestId}] Completed`);
-        })
-        .catch(async (err) => {
-          console.error(`[${requestId}] Generation failed:`, err);
-          await updateRequestStatus(requestId, "failed");
-        });
+    const job = await enqueueJob(requestId, query, tweet ?? false);
 
-      return res.status(202).json({ requestId, mode: "direct" });
-    } else {
-      // Queue mode (production with Redis)
-      const job = await parlayQueue!.add({ requestId, query, tweet: tweet ?? false });
-      console.log(`[${requestId}] Enqueued as job ${job.id}`);
-
-      return res.status(202).json({ requestId, jobId: job.id, mode: "queue" });
-    }
+    return res.status(202).json({
+      requestId,
+      jobId: job.jobId,
+      status: job.status,
+      queuePosition: job.status === "waiting" ? waitQueue.length : null,
+    });
   } catch (err) {
     console.error("Enqueue error:", err);
     return res.status(500).json({ error: "Failed to enqueue job" });
   }
 });
 
-// Optional: check job status directly from queue
-app.get("/job/:jobId", async (req, res) => {
-  if (SKIP_REDIS || !parlayQueue) {
-    return res.status(404).json({ error: "Queue mode not enabled" });
-  }
-
-  const job = await parlayQueue.getJob(req.params.jobId);
-  if (!job) return res.status(404).json({ error: "Job not found" });
-
-  const state = await job.getState();
-  return res.json({ jobId: job.id, state, attempts: job.attemptsMade });
+// Inspect live queue state
+app.get("/queue/status", (_req, res) => {
+  return res.json(queueStats());
 });
 
-// ─────────────────────────────────────────────
-// POST /parlay/odds
-// ─────────────────────────────────────────────
-
-/**
- * POST /parlay/odds
- *
- * Request body:
- * {
- *   betAmount: number,           // USD amount to bet
- *   legs: [
- *     {
- *       source: "polymarket" | "kalshi",
- *       marketSlug: string,      // Polymarket slug or Kalshi ticker
- *       outcome: string          // Outcome label; Kalshi must be "yes" | "no"
- *     },
- *     ...                        // 2–10 legs
- *   ]
- * }
- *
- * Response 200:
- * {
- *   success: true,
- *   data: ParlayResult
- * }
- *
- * Response 400: validation errors
- * Response 500: unexpected internal error
- */
+// ── POST /parlay/odds ──────────────────────────────────────────────────────────
 
 app.post("/parlay/odds", async (req: Request, res: Response) => {
   const { data, errors } = validateParlayInput(req.body);
@@ -217,8 +190,6 @@ app.post("/parlay/odds", async (req: Request, res: Response) => {
     });
   }
 
-  // 200 even when some legs are invalid — the caller can inspect per-leg errors.
-  // Only escalate to 422 if every single leg failed (nothing useful to return).
   const allLegsFailed = result.legs.every((leg) => leg.invalidReason !== undefined);
 
   if (allLegsFailed) {
@@ -229,16 +200,12 @@ app.post("/parlay/odds", async (req: Request, res: Response) => {
     });
   }
 
-  return res.status(200).json({
-    success: true,
-    data: result,
-  });
+  return res.status(200).json({ success: true, data: result });
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`EC2 parlay server running on port ${PORT}`);
-  console.log(`Mode: ${SKIP_REDIS ? "DIRECT (SKIP_REDIS)" : "QUEUE (Redis)"}`);
+  console.log(`Parlay server running on port ${PORT}`);
   console.log(`Concurrency: ${CONCURRENCY}`);
   console.log(`Auth: ${INTERNAL_SECRET ? "✓" : "✗"}`);
 });
