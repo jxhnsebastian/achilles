@@ -10,7 +10,7 @@ import connectDatabase from "./db";
 
 const PORT = process.env.PORT || 5000;
 const INTERNAL_SECRET = process.env.INTERNAL_SECRET!;
-const MONGO_URL = process.env.MONGO_URL!;
+const MONGO_URL = process.env.MONGO_URI!;
 const CONCURRENCY = Number(process.env.CONCURRENCY || 2);
 
 // ── Mongo ──────────────────────────────────────────────────────────────────────
