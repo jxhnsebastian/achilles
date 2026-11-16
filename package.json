@@ -1,0 +1,29 @@
+{
+  "name": "achilles",
+  "packageManager": "pnpm@10.6.5",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": "^10"
+  },
+  "private": true,
+  "dependencies": {
+    "net": "^1.0.2",
+    "tls": "^0.0.1"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "type-check": "tsc --noEmit",
+    "setup": "pnpm install",
+    "clean": "turbo run clean && rm -rf node_modules"
+  }
+}
