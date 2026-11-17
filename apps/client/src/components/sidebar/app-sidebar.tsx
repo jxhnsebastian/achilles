@@ -29,7 +29,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
-import Image from "next/image";
 import { useSession } from "next-auth/react";
 import { Bot } from "lucide-react";
 import Link from "next/link";
@@ -146,14 +145,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarMenuItem>
             <SidebarMenuButton asChild className="data-[slot=sidebar-menu-button]:!p-1.5">
               <Link href="/" className="relative">
-                <Image
-                  src={"/favicon.ico"}
-                  alt={"Achilles"}
-                  width={25}
-                  height={25}
-                  sizes="w-5 h-5"
-                  className="object-contain"
-                />
+                <span className="flex size-6 items-center justify-center rounded bg-primary text-xs font-bold text-primary-foreground">A</span>
                 <span className="text-base font-semibold">Achilles</span>
               </Link>
             </SidebarMenuButton>
